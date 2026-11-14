@@ -1,117 +1,118 @@
-# opencode-dom-memory
+# dom-memory-plugin
 
-Long-term project memory for **OpenCode**, ported one-for-one from the Claude Code
-plugin (`Dom memory`). When the plugin is connected and the first task runs, it
-**creates the memory of that project automatically and records the request
-verbatim** — no init step. Every subsequent task is kept:
+**Long-term project memory for AI coding agents** — a single engine shipped as
+**two host plugins**: one for **Claude Code** (`claude/`) and one for **OpenCode**
+(`opencode/`).
 
-* your plan becomes a **tree of append-only, versioned claims**, one branch per
-  plan item (auto-allocated `П1`, `П1.1`, …),
-* decisions and findings are recorded as claims (`dom_claim`, `dom_update`),
+The memory is created **automatically on the first task** of a project and then
+grows with it, in the background, without init steps:
+
+* your **plan becomes a tree of append-only, versioned claims** — one auto-allocated
+  branch per plan item (`П1`, `П1.1`, …), so "what was agreed" is never lost in chat;
+* **decisions and findings** are recorded as claims (`dom_claim`, `dom_update`) and
+  carry provenance, identity and dates;
 * everything lives in a **hash-chained SQLite ledger** under
-  `<project>/.dom-memory` (reads are always read-only; writes keep the chain).
+  `<project>/.dom-memory` — reads are read-only, every write keeps the chain intact,
+  so the memory is auditable and safe to commit or ignore, your choice.
 
-Same engine, same hooks as the Claude Code plugin — this repo is the OpenCode
-side of the pair.
+> **Honest status.** This is experimental tooling. A number of things are *not* done
+> yet — see **[`NOT_DONE.md`](NOT_DONE.md)** before relying on it.
 
-## What you get (mirrors the Claude Code package)
+---
 
-| file | role |
+## What it does / what it is for
+
+AI agents (Claude Code, OpenCode) are stateless across sessions, and their plan is
+usually lost the moment the conversation moves on. This plugin gives a **project** a
+*long-term memory* with structure:
+
+| Capability | How the agent uses it |
 |---|---|
-| `index.js` | the OpenCode hook plugin (dependency-free, `{id, setup}`) |
-| `scripts/dom_server.py` | stdio MCP server launcher |
-| `mockup/` | the DOM engine (`paths`, `admission`, `claim_entry`, `planning`, `storage`, `server`, …) |
-| `hooks/plan_hook.py`, `hooks/plan_check_hook.py` | the same hook programs Claude runs |
-| `skills/dom-memory/SKILL.md` | tells the agent how to use the memory |
-| `opencode.json.example` | a ready config fragment (MCP server + hook plugin) |
+| Plan is remembered | the plan-agent's accepted plan is ingested into claim branches; `dom_plan_status`, `dom_plan_tree` answer "what is open". |
+| Decisions are kept | `dom_claim` / `dom_update` record what was decided and why, with a version history. |
+| Facts are findable | `dom_find` and `dom_context` answer "where does this come from". |
+| Duty cycle | a hook reminds the agent once in a while to update the plan, instead of forgetting it. |
+| Audit trail | the ledger is hash-chained; every admission references its review and its predecessor. |
+| Review policy | `DOM_REVIEW` auto \| manual \| independent governs whether claims are admitted directly or by a review. |
 
-## Requirements
+It is **not** a chat-memory exporter, a "notes" database, or a general-purpose RAG.
 
-* **Python 3.11+** with `mcp`, `anyio`, `PyYAML`:
-  `python -m pip install -e .` (from this repo) or
-  `python -m pip install "mcp>=1.30" "anyio>=4.15" "PyYAML>=6.0"`.
-* A project you want a memory for (any OpenCode workspace).
+## Two versions, one engine
 
-## Install
+| Host | Folder | Install form | Entry |
+|---|---|---|---|
+| **Claude Code** | [`claude/`](claude/README.md) | import `dist/claude/dom-memory.plugin`, or use `mockup/`, `hooks/`, `scripts/` directly | `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` |
+| **OpenCode** | [`opencode/`](opencode/README.md) | `file:///.../opencode` plugin package, or unzip `dist/opencode/opencode-dom-memory-<VERSION>.zip` | `opencode/index.js` (+ `package.json`), `hooks/*.py`, `scripts/dom_server.py` |
 
-1. **Copy this repo** somewhere on the machine, e.g. `C:\tools\opencode-dom-memory`.
-2. **Wire it into `opencode.json`** of the project. Merge `opencode.json.example`,
-   filling in `<python.exe>` and both project paths:
+Both trees share the **same engine** (`mockup/`, the hook programs under `hooks/`,
+the server under `scripts/`, the agent skill under `skills/dom-memory/`). A change
+in the engine is synced into both trees by one command
+([`tools/sync_from_upstream.py`](tools/sync_from_upstream.py)).
 
-   ```json
-   "mcp": { "servers": { "dom-memory": {
-       "type": "local",
-       "command": ["C:/tools/python.exe", "C:/tools/opencode-dom-memory/scripts/dom_server.py"],
-       "environment": { "OPENCODE_PROJECT_DIR": "C:/tools/my-project" }, "disabled": false } } },
-   "plugins": [ { "package": "file:///C:/tools/opencode-dom-memory",
-       "options": { "pythonPath": "C:/tools/python.exe", "projectDir": "C:/tools/my-project" } } ]
-   ```
+## Quick start
 
-   > `file:///…/opencode-dom-memory` points at the repo root (it contains
-   > `package.json`; `index.js` is the plugin entry). The MCP server is shown in
-   > `/mcps` and can be toggled there too.
-3. **Reopen the session** (or let the config watcher reload it). On the first
-   prompt the memory is created under `<project>/.dom-memory` and the request is
-   recorded as the root claim.
+Full instructions with screenshots-style detail: **[`GET_STARTED.md`](GET_STARTED.md)**.
 
-## How it works
+```bash
+# 0) requirements (Python 3.11+ that can run an MCP server)
+python -m pip install "mcp>=1.30" "anyio>=4.15" "PyYAML>=6.0"
 
-* `session "prompt"` → `hooks/plan_check_hook.py`: **starts the memory on the
-  first task** (records the request verbatim) and runs the duty cycle — it takes
-  in queued plans and asks once for a plan check when due (`DOM_CHECK_EVERY`, default 10).
-* `session "context"` → `hooks/plan_hook.py --now`: when a **non-plan** agent
-  makes its first model call after the plan-agent wrote a fresh plan file under
-  `~/.opencode/plan`, the plan is ingested into the memory (the OpenCode stand-in
-  for Claude's `ExitPlanMode` hook).
-* The MCP server serves `dom_*` tools (`dom_plan_ingest`, `dom_plan_tree`,
-  `dom_find`, `dom_claim`, `dom_update`, `dom_plan_status`, …) and `skills/dom-memory`
-  teaches the agent to use them. Copy `skills/dom-memory/` into the project's
-  `.opencode/skills/` to make the skill load there.
+# 1) Claude Code: upload dist/claude/dom-memory.plugin as a custom plugin,
+#    then start a new session. Done.
 
-Both hooks **never block the session**: every failure is reported to the model
-or the server log instead of thrown.
+# 2) OpenCode: merge opencode/opencode.json.example into the project's opencode.json,
+#    replace <python.exe> and both paths, then reopen the session. Done.
+```
 
-## Options (`plugins[].options`)
+On the first prompt the memory is created under `<project>/.dom-memory` and the
+request is recorded verbatim as the root claim — no manual init.
 
-| option | default | meaning |
-|---|---|---|
-| `pythonPath` | `DOM_PYTHON` / `PYTHON_BIN` / `python` | interpreter with the deps |
-| `projectDir` | `OPENCODE_PROJECT_DIR`, then the plugin location | DOM project directory |
-| `directory` | `<project>/.dom-memory/main` | explicit run dir (with its runtime root) |
-| `planDir` | `~/.opencode/plan` | where the plan agent writes plan files |
-| `principal` / `role` | — / `owner` | `DOM_PRINCIPAL` / `DOM_ROLE` of this host session |
-| `checkEvery` | 10 | plan-check period (`DOM_CHECK_EVERY`) |
-| `autostart` | true | create the memory on the first task; `false` = silent until it exists |
-| `timeoutMs` | 60000 | per hook-program timeout |
-| `enabled` | true | `false` turns both hooks off |
+## Repository layout
 
-Environment used by the hooks/server: `OPENCODE_PROJECT_DIR`, `DOM_RUNTIME_ROOT`,
-`DOM_PRINCIPAL`, `DOM_ROLE`, `DOM_REVIEW` (auto | manual | independent), `DOM_CHECK_EVERY`,
-`DOM_LLM_PROVIDER` (deterministic | client | anthropic | command), `PYTHONUTF8=1`.
-
-Data layout: `<project>/.dom-memory/main/dom.sqlite3` (the append-only ledger).
-Add `.dom-memory/` to the project's `.gitignore` or commit it — your choice.
-
-## Verify
-
-`python tests/smoke_cold_start.py` — runs the real hooks against a throw-away
-project and asserts that the first task creates the memory and the plan is
-ingested. Or in OpenCode: `/mcps` shows `dom-memory`, and `dom_describe`
-answers `READY` after the first prompt.
+```
+.
+├── README.md              this file
+├── GET_STARTED.md         detailed installation for both hosts
+├── NOT_DONE.md            what is not implemented / not finalised (read this)
+├── LICENSE                MIT
+├── VERSION                current plugin version (0.2.3)
+├── claude/                self-contained Claude Code plugin tree
+│   ├── .claude-plugin/plugin.json   plugin manifest
+│   ├── .mcp.json                    MCP server (stdio), ${DOM_PYTHON:-python}
+│   ├── hooks/hooks.json             UserPromptSubmit + ExitPlanMode hooks
+│   ├── hooks/*.py                   the shared hook programs
+│   ├── mockup/                      the DOM engine (same in both trees)
+│   ├── scripts/dom_server.py        MCP server launcher
+│   ├── skills/dom-memory/SKILL.md   agent skill
+│   └── opencode-plugin/index.js      the host-independent hook plugin (also here)
+├── opencode/              self-contained OpenCode plugin
+│   ├── index.js           the OpenCode hook plugin (session.prompt / session.context)
+│   ├── package.json       plugin package metadata
+│   ├── opencode.json.example         config fragment (MCP server + plugins[])
+│   └── (engine files like claude/)
+├── tools/
+│   ├── sync_from_upstream.py  refresh both trees from the upstream engine source
+│   └── build_zip.py           emit both distributable archives into dist/
+├── tests/
+│   └── smoke_cold_start.py    host-free self-check (first task creates memory, plan ingress)
+└── dist/                  ready-made archives
+    ├── claude/dom-memory.plugin
+    └── opencode/opencode-dom-memory-<VERSION>.zip
+```
 
 ## Maintain / release
 
-The upstream DOM engine is the single source of truth; this repo is a curated
-mirror so it stays easy to keep current and to hand out:
+The upstream engine is the single source of truth; this repo is a curated mirror
+that stays easy to keep current and to hand out:
 
-```
-python tools/sync_from_upstream.py --upstream <path-to-worktree>   # refresh files
-python tools/build_zip.py                                          # dist/opencode-dom-memory-<VERSION>.zip
+```bash
+python tools/sync_from_upstream.py --upstream <path-to-engine-checkout>  # refresh claude/ + opencode/
+python tools/build_zip.py                                                # rebuild dist/ archives
+python tests/smoke_cold_start.py                                         # self-check both trees
 ```
 
-Bump `VERSION` (and `package.json` / `pyproject.toml`) on every release.
+Bump `VERSION` and the manifests on every release.
 
 ## License
 
-Not yet licensed for public reuse; for the moment this is the author's
-experimental tooling. Contact the author before redistributing beyond your own use.
+[MIT](LICENSE) © 2026 dom-memory-plugin contributors.

@@ -5,7 +5,7 @@
         "type": "local",
         "command": [
           "C:/.../path/to/python.exe",
-          "C:/.../opencode-dom-memory-plugin/scripts/dom_server.py"
+          "C:/.../dom-memory-plugin/opencode/scripts/dom_server.py"
         ],
         "environment": {
           "OPENCODE_PROJECT_DIR": "C:/.../path/to/your/project"
@@ -16,7 +16,7 @@
   },
   "plugins": [
     {
-      "package": "file:///C:/.../opencode-dom-memory-plugin",
+      "package": "file:///C:/.../dom-memory-plugin/opencode",
       "options": {
         "pythonPath": "C:/.../path/to/python.exe",
         "projectDir": "C:/.../path/to/your/project",

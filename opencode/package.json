@@ -24,7 +24,7 @@
     "ledger",
     "dom"
   ],
-  "license": "SEE LICENSE IN README.md",
+  "license": "MIT",
   "engines": {
     "node": ">=18"
   }

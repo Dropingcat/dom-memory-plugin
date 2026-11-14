@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "dom-memory": {
+      "command": "${DOM_PYTHON:-python}",
+      "args": [
+        "-B",
+        "${CLAUDE_PLUGIN_ROOT}/scripts/dom_server.py"
+      ]
+    }
+  }
+}

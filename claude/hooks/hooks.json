@@ -1,0 +1,28 @@
+{
+  "description": "Hands an approved plan to the DOM project memory and reminds the agent when a plan check is due.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${DOM_PYTHON:-python}\" -B \"${CLAUDE_PLUGIN_ROOT}/hooks/plan_hook.py\" --now",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${DOM_PYTHON:-python}\" -B \"${CLAUDE_PLUGIN_ROOT}/hooks/plan_check_hook.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

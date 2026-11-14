@@ -1,9 +1,10 @@
-"""Self-check without OpenCode: the first task of a fresh project must
+"""Self-check without a host: the first task of a fresh project must
 create the project memory and record it automatically.
 
 Runs the two hook programs exactly as a host runs them (plain-text prompt on
 stdin for plan_check_hook, a plan payload on stdin for plan_hook --now) against
-a throw-away project directory, then inspects the SQLite ledger.
+a throw-away project directory, then inspects the SQLite ledger. The same check
+runs against BOTH host trees (claude/ and opencode/), which share the engine.
 
     python tests/smoke_cold_start.py
 
@@ -20,21 +21,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PY = sys.executable
+TREES = ('claude', 'opencode')
 
 
-def run(script, args, stdin, cwd, env):
-    return subprocess.run([PY, '-B', str(REPO / 'hooks' / script), *args], input=stdin,
+def run(tree, script, args, stdin, cwd, env):
+    return subprocess.run([PY, '-B', str(REPO / tree / 'hooks' / script), *args], input=stdin,
                           capture_output=True, text=True, encoding='utf8', env=env, cwd=str(cwd),
                           timeout=120)
 
 
-def main():
-    try:
-        import yaml  # noqa: F401
-    except ImportError:
-        print('SKIP: PyYAML is not importable; install it (pip install PyYAML) to run the smoke test.')
-        return 3
-    scratch = Path(tempfile.mkdtemp(prefix='dom-smoke-'))
+def check(tree):
+    scratch = Path(tempfile.mkdtemp(prefix='dom-smoke-%s-' % tree))
     project = scratch / 'project'
     project.mkdir()
     env = dict(os.environ)
@@ -44,30 +41,42 @@ def main():
     dom = project / '.dom-memory' / 'main'
 
     # 1) first prompt: memory is created and the request recorded automatically.
-    r = run('plan_check_hook.py', [], 'первая задача: проверка автосоздания', project, env)
+    r = run(tree, 'plan_check_hook.py', [], 'первая задача: проверка автосоздания', project, env)
     if r.returncode != 0 or not (dom / 'dom.sqlite3').exists():
-        print('FAIL: memory not created on first task\n  rc=%s out=%r err=%r' % (r.returncode, r.stdout, r.stderr))
-        return 1
+        print('FAIL[%s]: memory not created on first task\n  rc=%s out=%r err=%r' % (tree, r.returncode, r.stdout, r.stderr))
+        return False
     con = sqlite3.connect(str(dom / 'dom.sqlite3'))
     root = con.execute('SELECT c.content_type FROM project_root p JOIN claims c ON c.id=p.request_claim_id').fetchone()
     if not root or root[0] != 'quote':
-        print('FAIL: root request claim missing', root)
-        return 1
+        print('FAIL[%s]: root request claim missing' % tree)
+        return False
 
     # 2) a plan is then ingested (not left queued).
     plan = '1. Интеллект-карта\n1.1 Первая подзадача\n2. Вторая задача\n'
-    r = run('plan_hook.py', ['--now'], plan, project, env)
+    r = run(tree, 'plan_hook.py', ['--now'], plan, project, env)
     state = con.execute('SELECT source_revision FROM plan_projection_state').fetchone()
     if r.returncode != 0 or not state or not state[0].startswith('r'):
-        print('FAIL: plan not ingested\n  rc=%s out=%r err=%r state=%r' % (r.returncode, r.stdout, r.stderr, state))
-        return 1
+        print('FAIL[%s]: plan not ingested\n  rc=%s out=%r err=%r state=%r' % (tree, r.returncode, r.stdout, r.stderr, state))
+        return False
 
     # 3) a second prompt records a duty check (no plan-change request loudness).
-    run('plan_check_hook.py', [], 'второй промпт', project, env)
+    run(tree, 'plan_check_hook.py', [], 'второй промпт', project, env)
     kinds = [k[0] for k in con.execute('SELECT DISTINCT kind FROM plan_checks')]
+    print('  %s/: PASS — root claim %s, plan %s, checks=%s' % (tree, root[0], state[0], kinds))
     shutil.rmtree(scratch, ignore_errors=True)
-    print('PASS: first task auto-created the memory (root claim %s), plan ingested %s, checks=%s'
-          % (root[0], state[0], kinds))
+    return True
+
+
+def main():
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        print('SKIP: PyYAML is not importable; install it (pip install PyYAML) to run the smoke test.')
+        return 3
+    results = {tree: check(tree) for tree in TREES}
+    if not all(results.values()):
+        return 1
+    print('PASS: both trees cold-start correctly.')
     return 0
 
 
