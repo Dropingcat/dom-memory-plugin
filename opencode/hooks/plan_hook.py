@@ -13,8 +13,18 @@ project is not started yet (or without ``--now``) the plan is queued in
 ``TodoWrite`` lists are session to-dos, not the project plan: they are ignored
 unless ``--todos`` is given.  The hook never blocks the agent: every failure
 exits 0 with a note on stderr.
+
+Plan-file consumption (OpenCode context hook): ``--plan-file <path>`` marks the
+ingest as coming from a plan file.  The hook then (1) refuses to overwrite a
+newer plan revision with a stale file (the file is older than the last plan
+change -> queued, not written), (2) passes the current revision as
+``base_revision`` so a concurrent change answers PLAN_CONFLICT instead of a
+silent overwrite, and (3) writes a consumption stamp ``<file>.dom.json``
+(session, principal, revision, digest) next to the file so another session
+does not pick it up as its own plan.
 """
 import argparse
+import hashlib
 import json
 import sys
 import uuid
@@ -204,12 +214,61 @@ def queue(directory, plan, source, kind, principal=None, session=None):
     return name
 
 
+# ---------------------------------------------- plan-file consumption stamp --
+def stamp_path(plan_file):
+    """Sidecar next to the plan file: ``<file>.dom.json`` (host-level, survives restarts)."""
+    return Path(plan_file).with_name(Path(plan_file).name + '.dom.json')
+
+
+def read_stamp(plan_file):
+    try:
+        data = json.loads(stamp_path(plan_file).read_text(encoding='utf8'))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_stamp(plan_file, session, principal, revision, digest):
+    """Record who consumed this plan file and into which revision."""
+    stamp = {'file': str(Path(plan_file).resolve()), 'session': session, 'principal': principal,
+             'revision': revision, 'digest': digest, 'at': datetime.now(timezone.utc).isoformat()}
+    path = stamp_path(plan_file)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(stamp, ensure_ascii=False), encoding='utf8')
+    tmp.replace(path)
+
+
+def file_digest(path):
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def current_revision(svc):
+    """Current source_revision of the 'agent' plan, or None when no plan is known."""
+    return plan_source_info(svc).get('source_revision')
+
+
+def plan_source_info(svc):
+    """The 'agent' plan source: {source_revision, last_changed_at} (bad signal -> empty dict)."""
+    try:
+        status = svc.plan_status(1)
+        for s in status.get('sources') or []:
+            if s.get('source') == 'agent':
+                return {k: s.get(k) for k in ('source_revision', 'last_changed_at')}
+    except Exception:
+        pass
+    return {}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='plan_hook')
     parser.add_argument('--directory', default=None, help='DOM run directory (default: <project>/.dom-memory/main)')
     parser.add_argument('--source', default='agent', choices=('agent', 'OMH'))
     parser.add_argument('--now', action='store_true', help='ingest directly; falls back to the inbox when the project is not started')
     parser.add_argument('--todos', action='store_true', help='also treat TodoWrite lists as the plan')
+    parser.add_argument('--plan-file', default=None, help='plan file path (OpenCode context hook): enables the consumption stamp and stale-file protection')
     args = parser.parse_args(argv)
     kind = None
     try:
@@ -237,9 +296,54 @@ def main(argv=None):
                 # (a host plugin needs no init step; the prompt hook does the same with the prompt).
                 directory.mkdir(parents=True, exist_ok=True)
                 svc.start(request=plan)
-            result = svc.plan_ingest(plan, args.source, session=session)
+            stale = None
+            if args.plan_file:
+                # B+D: never let a stale plan file silently overwrite a newer plan revision.
+                # The file must be at least as fresh as the last plan change, and it must
+                # not already be consumed by another session (a foreign plan is queued, not written).
+                stamp = read_stamp(args.plan_file)
+                if stamp and stamp.get('session') and stamp.get('session') != session:
+                    stale = 'consumed by another session (%s)' % (stamp.get('session') or '?')
+                else:
+                    import time
+                    mtime = Path(args.plan_file).stat().st_mtime
+                    last_changed = plan_source_info(svc).get('last_changed_at')
+                    if last_changed:
+                        try:
+                            changed_epoch = datetime.fromisoformat(last_changed).timestamp()
+                            if mtime < changed_epoch - 1:  # 1 s slack for filesystem clocks
+                                stale = 'plan file is older than the last plan change (%s)' % last_changed
+                        except (ValueError, TypeError):
+                            stale = None
+            base_revision = current_revision(svc)  # B+D: every hook ingest is a based-on write
+            if stale:
+                job = queue(directory, plan, args.source, kind, principal, session)
+                print(json.dumps({'status': 'QUEUED_STALE', 'job': job, 'reason': stale}), file=sys.stderr)
+                if kind == 'ExitPlanMode':
+                    tell_agent('The approved plan file was not written into the memory: %s. It was queued; '
+                               'read the current plan with dom_plan_tree and send the merged plan with dom_plan_ingest '
+                               '(base_revision=<current revision>).' % stale)
+                return 0
+            result = svc.plan_ingest(plan, args.source, session=session, base_revision=base_revision)
+            if result.get('status') == 'PLAN_CONFLICT':
+                # B+D: a concurrent change is never silently overwritten by the hook.
+                job = queue(directory, plan, args.source, kind, principal, session)
+                print(json.dumps({'status': 'QUEUED_CONFLICT', 'job': job,
+                                  'base_revision': result.get('base_revision'), 'current_revision': result.get('current_revision'),
+                                  'changed_by': result.get('changed_by'), 'item_paths': result.get('item_paths')}), file=sys.stderr)
+                if kind == 'ExitPlanMode':
+                    tell_agent('The approved plan was not written: the plan changed since revision %s (by %s, items %s). '
+                               'It was queued. Read the current plan with dom_plan_tree, merge, and send it with '
+                               'dom_plan_ingest(base_revision=<current revision>).'
+                               % (result.get('base_revision'), result.get('changed_by') or '?', ', '.join(result.get('item_paths') or [])))
+                return 0
             if result.get('status') in ('PLAN_INGESTED', 'PLAN_UNCHANGED'):
                 print(json.dumps({'status': result['status'], 'revision': result.get('source_revision')}), file=sys.stderr)
+                if args.plan_file:  # B+D: the consumption stamp binds this file to this session/project
+                    try:
+                        write_stamp(args.plan_file, session, principal, result.get('source_revision'), file_digest(args.plan_file))
+                    except OSError as e:
+                        print('plan_hook: stamp %s' % type(e).__name__, file=sys.stderr)
                 if kind == 'ExitPlanMode':
                     tell_agent('The approved plan was saved as revision %s (%d items). Check it with dom_plan_tree; '
                                'add the context of each item with dom_plan_ingest(contexts=...) if it is missing.'

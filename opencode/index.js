@@ -81,6 +81,17 @@ function newestPlanFile(planDir, now) {
   return best
 }
 
+/* Mirrors hooks/plan_hook.py stamp_path/read_stamp: the consumption sidecar.
+   Returns null when absent or unreadable. */
+function readStamp(planFile) {
+  try {
+    const data = JSON.parse(readFileSync(`${planFile}.dom.json`, "utf8"))
+    return data && typeof data === "object" ? data : null
+  } catch {
+    return null
+  }
+}
+
 function noteOf(stdout) {
   if (!stdout) return ""
   try {
@@ -124,7 +135,7 @@ export async function register(ctx) {
   console.error(`[dom-memory hooks] root=${root} project=${projectDir} planDir=${planDir}`)
 
   const pending = new Map()
-  let lastPlanDigest = null
+  const planDigests = new Map() // sessionID -> sha256 of the last plan file this session consumed
 
   const queue = (sessionID, text) => {
     if (!text) return
@@ -147,7 +158,7 @@ export async function register(ctx) {
     return { stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim(), error: result.error }
   }
 
-  const ingestPlan = (text, sessionID) => {
+  const ingestPlan = (text, sessionID, planFile) => {
     const payload = JSON.stringify({
       hook_event_name: "PostToolUse",
       tool_name: "ExitPlanMode",
@@ -156,7 +167,10 @@ export async function register(ctx) {
       cwd: projectDir,
       session_id: sessionID || undefined,
     })
-    const result = run(planHook, domDir ? ["--now", "--directory", domDir] : ["--now"], payload, sessionID)
+    const args = ["--now"]
+    if (domDir) args.push("--directory", domDir)
+    if (planFile) args.push("--plan-file", planFile) // B+D: consumption stamp + stale-file protection
+    const result = run(planHook, args, payload, sessionID)
     const note = noteOf(result.stdout)
     if (note) return note
     if (result.error) return `[DOM project memory] plan_hook failed: ${result.error.message}`
@@ -203,9 +217,14 @@ export async function register(ctx) {
           if (plan) {
             const text = readFileSync(plan.path, "utf8")
             const current = digest(text)
-            if (current !== lastPlanDigest) {
-              lastPlanDigest = current
-              const note = ingestPlan(text, sessionID)
+            const last = planDigests.get(sessionID)
+            const stamp = readStamp(plan.path)
+            const consumedByOther = !!(stamp && stamp.session && stamp.session !== sessionID)
+            if (current !== last && !consumedByOther) {
+              // B+D: per-session dedup, plus skip a plan already consumed by another session
+              // (its plan_hook wrote the <file>.dom.json stamp; a foreign plan is never written here).
+              planDigests.set(sessionID, current)
+              const note = ingestPlan(text, sessionID, plan.path)
               if (note) notes.push(note)
             }
           }

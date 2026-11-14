@@ -13,6 +13,26 @@ The `dom-memory` MCP server keeps the project's memory in `<project>/.dom-memory
 2. `dom_plan_status({})` — takes in plans queued by the hook and says whether a plan is known. If `request` is not null, do what it says (send the plan with `dom_plan_ingest`).
 3. `dom_plan_tree({"root": "П1"})` and `dom_find({"current_only": true})` to re-orient.
 
+## Planning workflow
+
+The approved plan reaches the memory through the hook. The hook never lets a stale or foreign
+plan silently overwrite what the project already has:
+
+- **Plan file consumption.** On OpenCode, approval writes `<plan>.md` under `~/.opencode/plan`; the
+  context hook hands it to `plan_hook.py --now --plan-file <path>`. A sidecar `<plan>.dom.json`
+  records who consumed it (session, principal, revision, digest). A plan file already consumed by
+  another session is never written here — it is a foreign plan, queued not ingested.
+- **No silent overwrite.** Every hook ingest is `base_revision`-based. If the plan changed since the
+  file was read, the hook answers `QUEUED_CONFLICT` (never `force`). If the file is older than the
+  last plan change, it is `QUEUED_STALE`. Both go to the inbox and are reported to the model, which
+  must read `dom_plan_tree` and send the merged plan with `dom_plan_ingest(base_revision=<current>)`.
+- **One write per read file.** The hook writes the consumption stamp on success; a plan file's
+  content is ingested for this session at most once.
+- If the project is not started, the plan itself is the request (`dom_start` on first ingest).
+
+When your session restarts or another agent touches the same plan, start from `dom_plan_status` and
+`dom_plan_tree`; re-read the current revision before any `dom_plan_ingest` (see "The plan").
+
 ## The plan
 
 - A plan approved in plan mode is taken in by the plugin hook, which then tells you the revision (or that it could not find the plan). Right after approval call `dom_plan_status({})`: if the plan is not there (`has_plan` false or the old revision), send it yourself: `dom_plan_ingest({"plan": "1. ...\n1.1 ...", "contexts": {"П1": "<why this item exists, from the conversation>"}})`. Add the `contexts` the hook cannot know.
