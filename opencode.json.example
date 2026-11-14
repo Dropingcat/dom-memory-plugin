@@ -1,0 +1,27 @@
+{
+  "mcp": {
+    "servers": {
+      "dom-memory": {
+        "type": "local",
+        "command": [
+          "C:/.../path/to/python.exe",
+          "C:/.../opencode-dom-memory-plugin/scripts/dom_server.py"
+        ],
+        "environment": {
+          "OPENCODE_PROJECT_DIR": "C:/.../path/to/your/project"
+        },
+        "disabled": false
+      }
+    }
+  },
+  "plugins": [
+    {
+      "package": "file:///C:/.../opencode-dom-memory-plugin",
+      "options": {
+        "pythonPath": "C:/.../path/to/python.exe",
+        "projectDir": "C:/.../path/to/your/project",
+        "autostart": true
+      }
+    }
+  ]
+}
