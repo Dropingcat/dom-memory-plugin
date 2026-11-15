@@ -34,6 +34,10 @@ plan silently overwrite what the project already has:
   finding behind the item — and the item's header claim carries it (the `context` property and the
   candidate `rationale`). A context is not part of the plan revision: the same plan with a new
   discussion answers `PLAN_UNCHANGED`, and the new context is versioned as a property.
+- **The queue is visible.** `dom_plan_status` reports `inbox_processed` (jobs taken in by this
+  call), `inbox_queued` (jobs still waiting) and `inbox_failed` (jobs that could not be taken in;
+  each has its result next to it under `inbox/failed/`). Queueing and draining are appended to
+  `<run>/watcher.log`, so "what happened to my queued plan" has an answer after the session ends.
 - If the project is not started, the plan itself is the request (`dom_start` on first ingest).
 
 When your session restarts or another agent touches the same plan, start from `dom_plan_status` and

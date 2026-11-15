@@ -35,7 +35,9 @@ decisions/findings are kept in a hash-chained SQLite ledger under
 ## Data
 
 `<project>/.dom-memory/main/dom.sqlite3` — add `.dom-memory/` to the project's
-`.gitignore` or commit it, your choice. The hooks never block the session.
+`.gitignore` or commit it, your choice. Next to it: `inbox/` (plans queued by the
+hooks, with `done/` and `failed/` results) and `watcher.log` (one JSON line per
+queued/drained job). The hooks never block the session.
 
 See the repo root `README.md`, `GET_STARTED.md` and `NOT_DONE.md` for options and
 the honest list of what is not done yet.

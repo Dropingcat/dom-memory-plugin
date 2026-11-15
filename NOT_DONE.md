@@ -66,10 +66,10 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **The pytest suite is not green on a system Python.** A large part of the engine
   does not import on the interpreter without the `mcp` package (`import mcp.types`);
   the maintainer's workflow runs tests through a dedicated venv.
-* **Two automated self-checks exist** (`tests/smoke_cold_start.py` and
-  `tests/check_plan_context.py`, both host-free). They cover the critical
-  cold-start path and the plan context; there is no test for reviews, encryption,
-  or the anthropic provider.
+* **Three automated self-checks exist** (`tests/smoke_cold_start.py`,
+  `tests/check_plan_context.py`, `tests/check_inbox_status.py`, all host-free).
+  They cover the critical cold-start path, the plan context and the plan queue;
+  there is no test for reviews, encryption, or the anthropic provider.
 * **No CI.** No GitHub Actions / pre-commit pipeline is configured yet.
 
 ## Known rough edges

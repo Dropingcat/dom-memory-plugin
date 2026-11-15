@@ -1187,9 +1187,13 @@ class Service:
     def plan_status(self,check_every=10):
         from . import planning, watcher
         # Plans queued by hooks while no duty process runs are taken in here.
-        jobs=watcher.drain_inbox(self) if self.lite and self.store.path.exists() else []
+        jobs=watcher.drain_inbox(self, log=lambda record: watcher.log_record(self.directory, record)) if self.lite and self.store.path.exists() else []
         result=planning.status(self,check_every)
-        if result.get('status')=='PLAN_STATUS': result['inbox_processed']=len(jobs)
+        if result.get('status')=='PLAN_STATUS':
+            result['inbox_processed']=len(jobs)
+            inbox=watcher.inbox_state(self)  # 2d: what is still waiting, what could not be taken in
+            result['inbox_queued']=inbox['queued']
+            result['inbox_failed']=inbox['failed']
         return result
     @guarded
     def task_claims(self,task,include_children=False,role='all',include_history=False):

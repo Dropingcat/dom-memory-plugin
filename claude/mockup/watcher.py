@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .admission import Service
+from .runlog import log_record
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = (ROOT / 'runtime').resolve()
@@ -54,9 +55,7 @@ class Watcher:
 
     # ------------------------------------------------------------ io --
     def log(self, record):
-        record = dict(record, at=_now())
-        with open(self.directory / 'watcher.log', 'a', encoding='utf8') as f:
-            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        log_record(self.directory, record)
 
     def state(self, state, **extra):
         body = dict(extra, state=state, at=_now(), pid=os.getpid())
@@ -152,6 +151,23 @@ class Watcher:
         return 0
 
 
+def inbox_state(svc):
+    """-> {'queued': n, 'failed': n, 'done': n}: jobs still waiting and their outcomes.
+
+    ``queued`` counts the job files still directly in ``inbox/`` (a job that
+    cannot be taken in yet stays there); ``done``/``failed`` count the result
+    files the drain wrote next to the moved job.
+    """
+    inbox = Path(svc.directory) / 'inbox'
+
+    def count(folder, pattern):
+        path = inbox / folder if folder else inbox
+        return len(list(path.glob(pattern))) if path.is_dir() else 0
+
+    return {'queued': count(None, '*.json'), 'failed': count('failed', '*.result.json'),
+            'done': count('done', '*.result.json')}
+
+
 def drain_inbox(svc, default_source='agent', log=None):
     """Process ``<run>/inbox/*.json`` jobs once; each moves to done/ or failed/ with its result."""
     inbox = Path(svc.directory) / 'inbox'
@@ -159,6 +175,7 @@ def drain_inbox(svc, default_source='agent', log=None):
     if not inbox.is_dir():
         return done
     for job in sorted(inbox.glob('*.json')):
+        error = None
         try:
             spec = json.loads(job.read_text(encoding='utf8'))
             op = spec.get('op')
@@ -181,12 +198,17 @@ def drain_inbox(svc, default_source='agent', log=None):
             folder = 'done' if result.get('status') in ('PLAN_INGESTED', 'PLAN_UNCHANGED', 'EXTRACTED') else 'failed'
         except Exception as e:
             result, folder = {'status': 'JOB_FAILED', 'error': type(e).__name__}, 'failed'
-            if log:
-                log({'event': 'job_failed', 'job': job.name, 'error': traceback.format_exception_only(type(e), e)[-1].strip()})
+            error = traceback.format_exception_only(type(e), e)[-1].strip()
         target = inbox / folder
         target.mkdir(exist_ok=True)
         (target / (job.stem + '.result.json')).write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str), encoding='utf8')
         os.replace(job, target / job.name)
+        if log:  # 2d: every job leaves a trace in watcher.log, not only the failures
+            record = {'event': 'job_done' if folder == 'done' else 'job_failed', 'job': job.name,
+                      'status': result.get('status'), 'folder': folder}
+            if error:
+                record['error'] = error
+            log(record)
         done.append({'job': job.name, 'status': result.get('status')})
     return done
 

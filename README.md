@@ -95,7 +95,8 @@ request is recorded verbatim as the root claim — no manual init.
 │   └── build_zip.py           emit both distributable archives into dist/
 ├── tests/
 │   ├── smoke_cold_start.py    host-free self-check (first task creates memory, plan ingress)
-│   └── check_plan_context.py  plan discussion -> per-item context, context updates without a revision
+│   ├── check_plan_context.py  plan discussion -> per-item context, context updates without a revision
+│   └── check_inbox_status.py  the plan queue is counted in dom_plan_status and logged
 └── dist/                  ready-made archives
     ├── claude/dom-memory.plugin
     └── opencode/opencode-dom-memory-<VERSION>.zip
@@ -111,6 +112,7 @@ python tools/sync_from_upstream.py --upstream <path-to-engine-checkout>  # refre
 python tools/build_zip.py                                                # rebuild dist/ archives
 python tests/smoke_cold_start.py                                         # self-check both trees
 python tests/check_plan_context.py                                       # self-check the plan context
+python tests/check_inbox_status.py                                       # self-check the queue counters/log
 ```
 
 Bump `VERSION` and the manifests on every release.

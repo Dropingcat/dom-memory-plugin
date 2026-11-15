@@ -286,6 +286,12 @@ def queue(directory, plan, source, kind, principal=None, session=None, contexts=
         spec['contexts'] = contexts  # a queued plan keeps the context it was queued with
     tmp.write_text(json.dumps(spec, ensure_ascii=False), encoding='utf8')
     tmp.replace(inbox / name)
+    try:  # 2d: a queued plan leaves a trace in the run log, not only on stderr
+        from mockup.runlog import log_record
+        log_record(directory, {'event': 'queued', 'job': name, 'hook': kind, 'source': source,
+                               'session': session, 'principal': principal, 'contexts': len(contexts or {})})
+    except Exception:
+        pass  # the job is what matters; the log is a trace
     return name
 
 

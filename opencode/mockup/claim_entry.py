@@ -1482,7 +1482,7 @@ TOOL_DOCS.update({
     'dom_plan_status': {
         'summary': 'Is the plan projection fresh, is the project closed, and is a plan check due? When no plan is known it returns the plan request to send to the agent; every check_every looks without a change it returns a plan-check request. Read-only.',
         'arguments': {'check_every': _arg('integer', False, 'Looks without a change after which a plan check is due (default 10).')},
-        'returns': 'status PLAN_STATUS, has_plan, project_closed, sources[], items, open_items, iterations_since_change, plan_check_due, request{kind, text}|null, next_steps.',
+        'returns': 'status PLAN_STATUS, has_plan, project_closed, sources[], items, open_items, iterations_since_change, plan_check_due, request{kind, text}|null, inbox_processed, inbox_queued, inbox_failed, next_steps.',
         'example': {},
     },
     'dom_task_graph': {
