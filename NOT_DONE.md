@@ -81,6 +81,12 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **Deterministic extraction is lossy:** the deterministic claim provider records
   decisions/plan items structurally; natural-language nuance from long prompts is
   not reproduced verbatim except for the root request claim.
+* **Plan identity is not anchored on the root item yet.** A `mode='full'` ingest
+  whose root title changed can still reuse old `plan_task_id`s at the same
+  positions (the rename heuristic in `flatten`), so a different plan can appear
+  as a revision of the old one instead of creating new claims. The decision and
+  the exact change are specified in
+  [`docs/plan-identity.md`](docs/plan-identity.md); not implemented yet.
 
 ---
 
