@@ -28,6 +28,12 @@ plan silently overwrite what the project already has:
   must read `dom_plan_tree` and send the merged plan with `dom_plan_ingest(base_revision=<current>)`.
 - **One write per read file.** The hook writes the consumption stamp on success; a plan file's
   content is ingested for this session at most once.
+- **Context comes with the plan.** A plan file is a distillation of the conversation, so the context
+  hook also sends the discussion that produced it (user/assistant text only — tool calls and tool
+  results are excluded). The hook distils it into a context per item — the requirement, constraint or
+  finding behind the item — and the item's header claim carries it (the `context` property and the
+  candidate `rationale`). A context is not part of the plan revision: the same plan with a new
+  discussion answers `PLAN_UNCHANGED`, and the new context is versioned as a property.
 - If the project is not started, the plan itself is the request (`dom_start` on first ingest).
 
 When your session restarts or another agent touches the same plan, start from `dom_plan_status` and
@@ -35,7 +41,7 @@ When your session restarts or another agent touches the same plan, start from `d
 
 ## The plan
 
-- A plan approved in plan mode is taken in by the plugin hook, which then tells you the revision (or that it could not find the plan). Right after approval call `dom_plan_status({})`: if the plan is not there (`has_plan` false or the old revision), send it yourself: `dom_plan_ingest({"plan": "1. ...\n1.1 ...", "contexts": {"П1": "<why this item exists, from the conversation>"}})`. Add the `contexts` the hook cannot know.
+- A plan approved in plan mode is taken in by the plugin hook, which then tells you the revision (or that it could not find the plan) and how many items got their discussion context. Right after approval call `dom_plan_status({})`: if the plan is not there (`has_plan` false or the old revision), send it yourself: `dom_plan_ingest({"plan": "1. ...\n1.1 ...", "contexts": {"П1": "<why this item exists, from the conversation>"}})`. The hook's context is extractive (it matches the discussion to the words of each item), so add or correct `contexts` where the reason is stated indirectly; sending the same plan with new `contexts` updates the context without moving the revision.
 - To add items to an existing plan without touching the others use `"mode": "partial"` and write their real numbers (`3.`, `3.1`) so they land at П3, П3.1.
 - Every item gets its own branch: П1=`AA`, П2=`AB`, П1.1=`AA100`, П1.1.1=`AA110`. Codes never move. A changed item becomes a new version of its header claim.
 - Several agents may share one plan. Send `"base_revision": "<source_revision you read>"` with every change: if someone changed the plan since, you get `PLAN_CONFLICT` (with `changed_by` and `item_paths`) and nothing is written — read the plan with `dom_plan_tree`, merge, and send again on the current revision. `force: true` overwrites on purpose. `dom_plan_status` shows who sent the current revision (`ingested_by`) and open `conflicts`.

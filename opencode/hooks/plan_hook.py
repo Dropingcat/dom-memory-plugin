@@ -22,6 +22,15 @@ change -> queued, not written), (2) passes the current revision as
 silent overwrite, and (3) writes a consumption stamp ``<file>.dom.json``
 (session, principal, revision, digest) next to the file so another session
 does not pick it up as its own plan.
+
+Discussion context (stage 2a+2b): a host that knows the conversation that
+produced the plan sends it as ``dom_discussion`` in the payload (OpenCode: the
+context hook passes the transcript text).  Without it, a Claude Code payload's
+``transcript_path`` is read.  The discussion is distilled into per-item contexts
+(``mockup.plan_context``) and sent with the plan, so a header claim carries not
+only its title but the reason it exists.  Distillation never blocks the plan:
+on any failure the plan is ingested without contexts and the agent is asked for
+them, as before.
 """
 import argparse
 import hashlib
@@ -37,6 +46,9 @@ ROOT = Path(__file__).resolve().parents[1]
 APPROVED_MARK = '## Approved Plan:'
 PLAN_FILE_KEYS = ('filePath', 'file_path', 'planFilePath', 'plan_file_path', 'planFile', 'plan_file')
 PLAN_FILE_MAX_AGE = 15 * 60  # only a plan file written just now is the plan just approved
+DISCUSSION_KEYS = ('dom_discussion', 'discussion', 'plan_discussion')
+DISCUSSION_MAX_CHARS = 24000  # the plan discussion, not the whole session history
+DISCUSSION_MAX_MESSAGES = 80
 
 
 def _text_plan(value):
@@ -180,6 +192,67 @@ def plan_from_hook(raw, todos=False):
     return json.dumps(data, ensure_ascii=False), 'json'
 
 
+def _blocks_text(content):
+    """Claude content blocks -> their text (tool_use/tool_result are not discussion)."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ''
+    parts = [block['text'] for block in content
+             if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)]
+    return '\n'.join(parts).strip()
+
+
+def _from_transcript_discussion(path):
+    """Claude Code transcript (JSONL) -> the last user/assistant text, role-marked."""
+    try:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            return None
+        lines = p.read_text(encoding='utf8', errors='replace').splitlines()[-800:]
+    except (OSError, ValueError):
+        return None
+    messages = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get('message') if isinstance(entry, dict) else None
+        if not isinstance(message, dict) or message.get('role') not in ('user', 'assistant'):
+            continue
+        text = _blocks_text(message.get('content'))
+        if text:
+            messages.append(('User: ' if message['role'] == 'user' else 'Assistant: ') + text)
+    if not messages:
+        return None
+    kept, total = [], 0
+    for message in reversed(messages[-DISCUSSION_MAX_MESSAGES:]):
+        if kept and total + len(message) + 2 > DISCUSSION_MAX_CHARS:
+            break
+        if not kept and len(message) > DISCUSSION_MAX_CHARS:
+            message = message[-DISCUSSION_MAX_CHARS:]  # the newest message is the plan itself
+        kept.append(message)
+        total += len(message) + 2
+    return '\n\n'.join(reversed(kept))
+
+
+def discussion_from_hook(raw):
+    """The conversation that produced the plan: the host's text or its transcript."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in DISCUSSION_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    path = data.get('transcript_path')
+    return _from_transcript_discussion(path) if isinstance(path, str) else None
+
+
 def tell_agent(text):
     """PostToolUse: hookSpecificOutput.additionalContext reaches the model."""
     print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': '[DOM project memory] ' + text}},
@@ -203,13 +276,15 @@ def session_of(raw):
     return sid if isinstance(sid, str) and sid.strip() else None
 
 
-def queue(directory, plan, source, kind, principal=None, session=None):
+def queue(directory, plan, source, kind, principal=None, session=None, contexts=None):
     inbox = directory / 'inbox'
     inbox.mkdir(parents=True, exist_ok=True)
     name = 'plan-%s-%s.json' % (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S'), uuid.uuid4().hex[:6])
     tmp = inbox / (name + '.tmp')
-    tmp.write_text(json.dumps({'op': 'ingest', 'plan': plan, 'source': source, 'hook': kind, 'principal': principal, 'session': session},
-                              ensure_ascii=False), encoding='utf8')
+    spec = {'op': 'ingest', 'plan': plan, 'source': source, 'hook': kind, 'principal': principal, 'session': session}
+    if contexts:
+        spec['contexts'] = contexts  # a queued plan keeps the context it was queued with
+    tmp.write_text(json.dumps(spec, ensure_ascii=False), encoding='utf8')
     tmp.replace(inbox / name)
     return name
 
@@ -288,6 +363,16 @@ def main(argv=None):
         else:
             from mockup.paths import plugin_directory
             directory = plugin_directory()
+        # 2a+2b: the plan file is the distillation, the discussion is the reason.
+        # A distillation failure must never cost the plan itself.
+        contexts = {}
+        discussion = discussion_from_hook(raw)
+        if discussion:
+            try:
+                from mockup.plan_context import distill_contexts
+                contexts = distill_contexts(plan, discussion)
+            except Exception as e:
+                print('plan_hook: context distillation skipped (%s)' % type(e).__name__, file=sys.stderr)
         if args.now:
             from mockup.admission import Service
             svc = Service(directory, profile='lite', role=role, principal=principal)
@@ -317,17 +402,17 @@ def main(argv=None):
                             stale = None
             base_revision = current_revision(svc)  # B+D: every hook ingest is a based-on write
             if stale:
-                job = queue(directory, plan, args.source, kind, principal, session)
+                job = queue(directory, plan, args.source, kind, principal, session, contexts)
                 print(json.dumps({'status': 'QUEUED_STALE', 'job': job, 'reason': stale}), file=sys.stderr)
                 if kind == 'ExitPlanMode':
                     tell_agent('The approved plan file was not written into the memory: %s. It was queued; '
                                'read the current plan with dom_plan_tree and send the merged plan with dom_plan_ingest '
                                '(base_revision=<current revision>).' % stale)
                 return 0
-            result = svc.plan_ingest(plan, args.source, session=session, base_revision=base_revision)
+            result = svc.plan_ingest(plan, args.source, session=session, base_revision=base_revision, contexts=contexts or None)
             if result.get('status') == 'PLAN_CONFLICT':
                 # B+D: a concurrent change is never silently overwritten by the hook.
-                job = queue(directory, plan, args.source, kind, principal, session)
+                job = queue(directory, plan, args.source, kind, principal, session, contexts)
                 print(json.dumps({'status': 'QUEUED_CONFLICT', 'job': job,
                                   'base_revision': result.get('base_revision'), 'current_revision': result.get('current_revision'),
                                   'changed_by': result.get('changed_by'), 'item_paths': result.get('item_paths')}), file=sys.stderr)
@@ -345,11 +430,15 @@ def main(argv=None):
                     except OSError as e:
                         print('plan_hook: stamp %s' % type(e).__name__, file=sys.stderr)
                 if kind == 'ExitPlanMode':
-                    tell_agent('The approved plan was saved as revision %s (%d items). Check it with dom_plan_tree; '
-                               'add the context of each item with dom_plan_ingest(contexts=...) if it is missing.'
-                               % (result.get('source_revision'), len(result.get('tasks') or [])))
+                    saved = ('The approved plan was saved as revision %s (%d items'
+                             % (result.get('source_revision'), len(result.get('tasks') or [])))
+                    if contexts:
+                        saved += ', %d with the discussion context' % len(contexts)
+                    saved += ('). Check it with dom_plan_tree; add the context of each item with '
+                              'dom_plan_ingest(contexts=...) if it is missing.')
+                    tell_agent(saved)
                 return 0
-        job = queue(directory, plan, args.source, kind, principal, session)
+        job = queue(directory, plan, args.source, kind, principal, session, contexts)
         print(json.dumps({'status': 'QUEUED', 'job': job}), file=sys.stderr)
         if kind == 'ExitPlanMode':
             tell_agent('The approved plan was queued (%s); dom_plan_status takes it in.' % job)

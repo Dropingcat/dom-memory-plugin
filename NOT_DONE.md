@@ -66,8 +66,9 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **The pytest suite is not green on a system Python.** A large part of the engine
   does not import on the interpreter without the `mcp` package (`import mcp.types`);
   the maintainer's workflow runs tests through a dedicated venv.
-* **Only one automated smoke test exists** (`tests/smoke_cold_start.py`, host-free).
-  It covers the critical cold-start path; there is no test for reviews, encryption,
+* **Two automated self-checks exist** (`tests/smoke_cold_start.py` and
+  `tests/check_plan_context.py`, both host-free). They cover the critical
+  cold-start path and the plan context; there is no test for reviews, encryption,
   or the anthropic provider.
 * **No CI.** No GitHub Actions / pre-commit pipeline is configured yet.
 
@@ -81,6 +82,13 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **Deterministic extraction is lossy:** the deterministic claim provider records
   decisions/plan items structurally; natural-language nuance from long prompts is
   not reproduced verbatim except for the root request claim.
+* **Plan context is extractive, not semantic:** the hook distils the plan
+  discussion into per-item contexts by matching sentence units to the words of
+  each item (word prefixes absorb inflection, frequent words weigh less). An item
+  whose title shares no words with the discussion gets no context, and a reason
+  stated in paraphrase can be missed; the agent is asked to add the missing
+  `contexts` with `dom_plan_ingest`. No model is called, so the result is
+  reproducible but not a paraphrase.
 * **Plan identity is not anchored on the root item yet.** A `mode='full'` ingest
   whose root title changed can still reuse old `plan_task_id`s at the same
   positions (the rename heuristic in `flatten`), so a different plan can appear

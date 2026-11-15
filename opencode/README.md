@@ -25,7 +25,8 @@ decisions/findings are kept in a hash-chained SQLite ledger under
   * `session "prompt"` → `hooks/plan_check_hook.py` (duty cycle),
   * `session "context"` → `hooks/plan_hook.py --now` for a fresh plan file under
     `~/.opencode/plan` when a non-plan agent runs (OpenCode's stand-in for Claude's
-    ExitPlanMode hook).
+    ExitPlanMode hook). The same call sends the plan discussion (user/assistant
+    text of the request), which `plan_hook.py` distils into a context per item.
 * `scripts/dom_server.py` + `mockup/` → the `dom-memory` stdio MCP server with the
   `dom_*` tools.
 * `skills/dom-memory/SKILL.md` → copy into the project's `.opencode/skills/` to make

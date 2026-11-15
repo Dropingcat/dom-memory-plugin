@@ -20,7 +20,8 @@ decisions/findings are kept in a hash-chained SQLite ledger under
 ## What it wires
 
 * `hooks/hooks.json` → `UserPromptSubmit` (plan-check duty cycle) +
-  `PostToolUse(ExitPlanMode)` (approved plan → memory).
+  `PostToolUse(ExitPlanMode)` (approved plan → memory). The plan hook reads the
+  session transcript and distils the plan discussion into a context per item.
 * `.mcp.json` → the `dom-memory` stdio MCP server (`scripts/dom_server.py`,
   `mockup/` engine), tools: `dom_plan_ingest`, `dom_plan_tree`, `dom_claim`,
   `dom_update`, `dom_find`, `dom_describe`, …

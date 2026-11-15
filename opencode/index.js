@@ -14,6 +14,11 @@
  *                        non-plan agent (the moment of approval); queued notes are injected
  *                        into the model request (the OpenCode equivalent of additionalContext)
  *
+ * The plan file is a distillation of the conversation, so the context hook also sends the
+ * discussion that produced it (the user/assistant text of event.messages, tool calls and
+ * tool results excluded). plan_hook.py distils that into a context per plan item, and the
+ * header claim of an item then carries the reason it exists, not only its title.
+ *
  * The Python hook programs are the single source of truth: this file only decides when to run
  * them and how their answer reaches the model. A hook never blocks the session: every failure is
  * reported to the model instead of thrown.
@@ -41,6 +46,8 @@ import { fileURLToPath } from "node:url"
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PLAN_MAX_AGE_MS = 15 * 60 * 1000
 const PLAN_AGENT = "plan"
+const DISCUSSION_MAX_CHARS = 24000 // the plan discussion, not the whole session history
+const DISCUSSION_MAX_MESSAGES = 80
 
 function findRoot(explicit) {
   const candidates = explicit ? [resolve(explicit)] : [HERE, resolve(HERE, ".."), resolve(HERE, "../..")]
@@ -90,6 +97,46 @@ function readStamp(planFile) {
   } catch {
     return null
   }
+}
+
+/* Text of one request message. The model message is {role, content[]} with
+   text/media/tool-call/tool-result parts: only text is discussion. */
+function messageText(message) {
+  const content = message?.content
+  if (typeof content === "string") return content.trim()
+  if (!Array.isArray(content)) return ""
+  const parts = []
+  for (const part of content) {
+    if (part && part.type === "text" && typeof part.text === "string" && part.text.trim()) parts.push(part.text)
+  }
+  return parts.join("\n").trim()
+}
+
+/* The tail of the conversation that produced the plan, role-marked. Keeps whole
+   messages while they fit the budget and always keeps the newest one (truncated
+   from the head), so the plan discussion survives a long session. */
+export function discussionFromMessages(messages) {
+  if (!Array.isArray(messages)) return ""
+  const lines = []
+  for (const message of messages) {
+    const role = message?.role
+    if (role !== "user" && role !== "assistant") continue
+    const text = messageText(message)
+    if (text) lines.push(`${role === "user" ? "User" : "Assistant"}: ${text}`)
+  }
+  let out = ""
+  let kept = 0
+  for (let i = lines.length - 1; i >= 0 && kept < DISCUSSION_MAX_MESSAGES; i--) {
+    let line = lines[i]
+    if (!out && line.length > DISCUSSION_MAX_CHARS) {
+      out = line.slice(line.length - DISCUSSION_MAX_CHARS) // the newest message is the plan itself
+      break
+    }
+    if (out && out.length + line.length + 2 > DISCUSSION_MAX_CHARS) break
+    out = out ? `${line}\n\n${out}` : line
+    kept++
+  }
+  return out
 }
 
 function noteOf(stdout) {
@@ -158,7 +205,7 @@ export async function register(ctx) {
     return { stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim(), error: result.error }
   }
 
-  const ingestPlan = (text, sessionID, planFile) => {
+  const ingestPlan = (text, sessionID, planFile, discussion) => {
     const payload = JSON.stringify({
       hook_event_name: "PostToolUse",
       tool_name: "ExitPlanMode",
@@ -166,6 +213,7 @@ export async function register(ctx) {
       tool_response: {},
       cwd: projectDir,
       session_id: sessionID || undefined,
+      dom_discussion: discussion || undefined,
     })
     const args = ["--now"]
     if (domDir) args.push("--directory", domDir)
@@ -224,7 +272,7 @@ export async function register(ctx) {
               // B+D: per-session dedup, plus skip a plan already consumed by another session
               // (its plan_hook wrote the <file>.dom.json stamp; a foreign plan is never written here).
               planDigests.set(sessionID, current)
-              const note = ingestPlan(text, sessionID, plan.path)
+              const note = ingestPlan(text, sessionID, plan.path, discussionFromMessages(event?.messages))
               if (note) notes.push(note)
             }
           }

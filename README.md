@@ -94,7 +94,8 @@ request is recorded verbatim as the root claim — no manual init.
 │   ├── sync_from_upstream.py  refresh both trees from the upstream engine source
 │   └── build_zip.py           emit both distributable archives into dist/
 ├── tests/
-│   └── smoke_cold_start.py    host-free self-check (first task creates memory, plan ingress)
+│   ├── smoke_cold_start.py    host-free self-check (first task creates memory, plan ingress)
+│   └── check_plan_context.py  plan discussion -> per-item context, context updates without a revision
 └── dist/                  ready-made archives
     ├── claude/dom-memory.plugin
     └── opencode/opencode-dom-memory-<VERSION>.zip
@@ -109,6 +110,7 @@ that stays easy to keep current and to hand out:
 python tools/sync_from_upstream.py --upstream <path-to-engine-checkout>  # refresh claude/ + opencode/
 python tools/build_zip.py                                                # rebuild dist/ archives
 python tests/smoke_cold_start.py                                         # self-check both trees
+python tests/check_plan_context.py                                       # self-check the plan context
 ```
 
 Bump `VERSION` and the manifests on every release.
