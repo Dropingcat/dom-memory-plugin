@@ -96,7 +96,8 @@ request is recorded verbatim as the root claim — no manual init.
 ├── tests/
 │   ├── smoke_cold_start.py    host-free self-check (first task creates memory, plan ingress)
 │   ├── check_plan_context.py  plan discussion -> per-item context, context updates without a revision
-│   └── check_inbox_status.py  the plan queue is counted in dom_plan_status and logged
+│   ├── check_inbox_status.py  the plan queue is counted in dom_plan_status and logged
+│   └── check_plan_identity.py new root = new plan; a rename is a revision; partial mode unaffected
 └── dist/                  ready-made archives
     ├── claude/dom-memory.plugin
     └── opencode/opencode-dom-memory-<VERSION>.zip
@@ -113,6 +114,7 @@ python tools/build_zip.py                                                # rebui
 python tests/smoke_cold_start.py                                         # self-check both trees
 python tests/check_plan_context.py                                       # self-check the plan context
 python tests/check_inbox_status.py                                       # self-check the queue counters/log
+python tests/check_plan_identity.py                                      # self-check plan identity (new root = new plan)
 ```
 
 Bump `VERSION` and the manifests on every release.

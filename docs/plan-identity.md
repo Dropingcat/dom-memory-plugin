@@ -1,7 +1,9 @@
 # Plan identity: the root item is the plan
 
-**Status:** accepted as the stage-2 design decision; not implemented. Follows the
-plan-file guards in `21a0270`. No engine code is changed by this document.
+**Status:** accepted as the stage-2 design decision; implemented in
+`mockup/planning.py` (`flatten` root guard, `_first_top`) with the acceptance
+tests in `tests/check_plan_identity.py` (A–C, both host trees) and the r11 replay
+in §9. Follows the plan-file guards in `21a0270`.
 
 ## 1. Problem
 
@@ -126,9 +128,9 @@ declared by the root, not inferred from a position.
 5. **No other identity rule changes.** Claim identity, versioning, branching and
    conflict handling stay as they are.
 
-## 7. Implementation sketch (not applied)
+## 7. Implementation
 
-Inside `flatten(roots, previous)`, before the walk:
+Inside `flatten(roots, previous)`, before the walk (`norm` moved above it):
 
 ```python
 def _first_top(previous):
@@ -158,7 +160,8 @@ same normalization and numbering as item ids.
 
 Size: a small helper plus a guard (about 12 lines) in
 `opencode/mockup/planning.py`, mirrored to `claude/mockup/planning.py`. No schema
-change, no new MCP tool, no migration.
+change, no new MCP tool, no migration. The guard and the helper are in place; the
+tests below are the proof.
 
 ## 8. Edge cases and known limits
 
@@ -182,8 +185,10 @@ change, no new MCP tool, no migration.
    `1. План A\n1.1 A1\n1.2 A2\n2. A3`.
 2. Ingest B (`mode='full'`): `1. План B\n1.1 B1\n1.2 B2\n2. B3`.
 3. Assert: every B item's `plan_task_id` is absent from A's ids; every A item is
-   archived (`archived=1`); A's header claims are `is_current=false`; B's header
-   claims are new claim ids.
+   archived (`archived=1`); B's header claims are new claim ids; no header claim
+   of A is replaced. (Archived items keep their claims as they are: archiving a
+   plan item does not retire its header claim, and the guard never updates an old
+   claim — the new plan gets new claims.)
 
 **Test B — revision keeps identity.**
 1. Fresh project. Ingest A: `1. План A\n1.1 A1\n1.2 A2\n2. A3`.
@@ -200,6 +205,14 @@ Replay r10 → r11 on
 `omh-baseline-dom-mcp/.dom-memory/backups/2026-11-14-r11-before-restore/dom.sqlite3`
 and confirm no r10 `plan_task_id` appears in r11's current projection and all r10
 items are archived.
+
+Result (2026-11-15): the r10 and r11 plan texts were reconstructed from the
+backup's `plan_task_versions` and replayed in a fresh project. r11's projection
+got 3 fresh ids, **0** of the replayed r10 ids were reused (the bad r11 carried
+3: `pt-11e18d…`, `pt-e3da0c…`, `pt-6104d8…`), and all 16 r10 items were
+archived. The replayed r10 ids differ from the backup's r10 ids because the
+original r10 ids had themselves been carried over from earlier renames; the
+guard's decision depends on the root title, not on the provenance of the ids.
 
 ## 10. Non-goals
 

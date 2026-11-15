@@ -1,6 +1,6 @@
 {
   "name": "dom-memory",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Long-term project memory: the plan becomes a tree of append-only, versioned claims (one branch per plan item), with review, export and a hash-chained ledger in <project>/.dom-memory.",
   "author": {
     "name": "local"

@@ -66,10 +66,11 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **The pytest suite is not green on a system Python.** A large part of the engine
   does not import on the interpreter without the `mcp` package (`import mcp.types`);
   the maintainer's workflow runs tests through a dedicated venv.
-* **Three automated self-checks exist** (`tests/smoke_cold_start.py`,
-  `tests/check_plan_context.py`, `tests/check_inbox_status.py`, all host-free).
-  They cover the critical cold-start path, the plan context and the plan queue;
-  there is no test for reviews, encryption, or the anthropic provider.
+* **Four automated self-checks exist** (`tests/smoke_cold_start.py`,
+  `tests/check_plan_context.py`, `tests/check_inbox_status.py`,
+  `tests/check_plan_identity.py`, all host-free). They cover the critical
+  cold-start path, the plan context, the plan queue and plan identity; there is
+  no test for reviews, encryption, or the anthropic provider.
 * **No CI.** No GitHub Actions / pre-commit pipeline is configured yet.
 
 ## Known rough edges
@@ -89,12 +90,12 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
   stated in paraphrase can be missed; the agent is asked to add the missing
   `contexts` with `dom_plan_ingest`. No model is called, so the result is
   reproducible but not a paraphrase.
-* **Plan identity is not anchored on the root item yet.** A `mode='full'` ingest
-  whose root title changed can still reuse old `plan_task_id`s at the same
-  positions (the rename heuristic in `flatten`), so a different plan can appear
-  as a revision of the old one instead of creating new claims. The decision and
-  the exact change are specified in
-  [`docs/plan-identity.md`](docs/plan-identity.md); not implemented yet.
+* **A new plan that keeps the old root title is not expressible.** Plan identity
+  is the identity of the root item: renaming the root starts a new plan (fresh
+  ids, old plan archived as a unit), while a genuinely different plan that reuses
+  the old root title is recorded as a revision of it. There is no `new_plan`
+  flag; the rule and its limits are in
+  [`docs/plan-identity.md`](docs/plan-identity.md).
 
 ---
 

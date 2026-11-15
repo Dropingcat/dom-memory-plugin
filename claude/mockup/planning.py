@@ -242,6 +242,16 @@ def parse_plan(plan, fmt='auto'):
     return preamble, roots
 
 
+def _first_top(previous):
+    """plan_task_id of the first top-level item of the current projection."""
+    tops = []
+    for (parent, path), tid in previous.items():
+        if parent is None:
+            suffix = path[len(PLAN_PREFIX):]
+            tops.append((int(suffix) if suffix.isdigit() else 0, tid))
+    return min(tops)[1] if tops else None
+
+
 def flatten(roots, previous=None):
     """Nodes -> ordered list of dicts with path, plan_task_id, parent_id, level.
 
@@ -249,13 +259,24 @@ def flatten(roots, previous=None):
     projection.  An item without an explicit id whose title changed keeps the
     old identity when the old item at the same place disappeared from the plan
     (a rename, not a new task); children follow their parent.
+
+    The identity of a plan is the identity of its root item
+    (docs/plan-identity.md): a different root title starts a new plan, not a
+    revision, so no old id is reused anywhere in the tree.  An explicit root id
+    declares continuity and wins.
     """
+    def norm(title):
+        return re.sub(r'\s+', ' ', title).strip().casefold()
+
+    if previous and roots:
+        root = roots[0]
+        root_id = root.get('id') or 'pt-' + digest({'parent': None, 'title': norm(root['title'])})[:16]
+        old_root = _first_top(previous)
+        if old_root is not None and old_root != root_id:
+            previous = None  # the plan root changed -> a new plan, not a revision
     if previous:
         naive = {t['plan_task_id'] for t in flatten(roots)}
     out, ids = [], set()
-
-    def norm(title):
-        return re.sub(r'\s+', ' ', title).strip().casefold()
 
     def numbers(nodes):
         # explicit numbers ("3.", "3.1") are kept when they strictly increase (F-40); else positions
