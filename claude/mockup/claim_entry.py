@@ -1624,7 +1624,7 @@ TOOL_DOCS.update({
             'by': _arg('string', False, 'accept: agent (default) or user. Recorded, not authenticated.'),
             'note': _arg('string', False, 'accept/withdraw/dispute/resolve: the reason (required for withdraw, dispute, resolve).'),
         },
-        'returns': 'status DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED; source_id, source_state, distillate_id, logical_claim_id, effective{claim_id,version,origin}, versions[{claim_id,version,state,origin,text,...}], open_conflicts, failed, review, next_steps. Refusals: NO_STATEMENT, SPAN_NOT_FOUND, SPAN_AMBIGUOUS, NO_IMPROVEMENT, PROPOSAL_CONFLICT, REVIEW_REQUIRED, REVIEW_STALE, DISTILLATE_DISPUTED, DISTILLATE_LOOP.',
+        'returns': 'status DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED; source_id, source_state, distillate_id, logical_claim_id, effective{claim_id,version,origin}, versions[{claim_id,version,state,origin,text,...}], open_conflicts, failed, review, next_steps. Refusals: NO_STATEMENT, SPAN_NOT_FOUND, SPAN_AMBIGUOUS, NO_IMPROVEMENT, PROPOSAL_CONFLICT, REVIEW_REQUIRED, REVIEW_STALE, NOT_CURRENT, DISTILLATE_DISPUTED, DISTILLATE_LOOP.',
         'example': {'action': 'show', 'source': '<source_id>'},
     },
 })

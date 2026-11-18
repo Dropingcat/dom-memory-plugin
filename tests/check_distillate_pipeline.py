@@ -101,6 +101,9 @@ if len(r1['versions']) != 2 or r1['versions'][-1]['state'] != 'proposed':
     bad('propose versions: %r' % r1['versions'])
 if (r1.get('effective') or {}).get('claim_id') != vid:
     bad('the proposal must not displace the v1: %r' % r1.get('effective'))
+r1b = svc.distillate('validate', distillate=vid)
+if r1b.get('status') != 'NOT_CURRENT' or r1b.get('claim_id') != v2:
+    bad('validate of a non-current version: %r' % r1b)
 
 # 2. the identical retry replays the version
 r2 = svc.distillate('propose', source=sid, text=COMPRESSED, anchors=ANCHORS)

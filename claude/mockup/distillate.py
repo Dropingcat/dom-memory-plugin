@@ -712,13 +712,26 @@ def _show_next(out):
                  'arguments': {'action': 'propose', 'source': sid, 'text': '<text>', 'anchors': [['<verbatim quote>']]},
                  'why': 'no version is effective; propose a grounded candidate'}]
     state = out['versions'][-1]['state'] if out['versions'] else None
-    if state in ('proposed', 'rejected'):
+    if state in ('proposed',):
         return [{'tool': 'dom_distillate', 'arguments': {'action': 'validate', 'source': sid},
                  'why': 'run the V1-V8 gates on the current version'}]
+    if state == 'rejected':
+        return [{'tool': 'dom_distillate',
+                 'arguments': {'action': 'propose', 'source': sid, 'text': '<text>', 'anchors': [['<verbatim quote>']]},
+                 'why': 'the current version failed the gates; fix the failed checks and propose again'}]
     if state == 'validated':
         return [{'tool': 'dom_distillate', 'arguments': {'action': 'accept', 'source': sid, 'by': 'agent'},
                  'why': 'the current version passed the gates; accept it to make it effective'}]
     return []
+
+
+def _require_current(distillate, current):
+    """validate/accept/withdraw are current-version actions: naming another
+    version is NOT_CURRENT, never a silent write on the wrong version."""
+    if distillate is not None and distillate != current['claim_id']:
+        raise _denied()('NOT_CURRENT', claim_id=current['claim_id'],
+                        hint='Only the current version can be validated, accepted or withdrawn; '
+                             'read it with dom_distillate(action="show").')
 
 
 def _show(svc, source=None, distillate=None):
@@ -893,7 +906,7 @@ def _check_v5(spans, sentences, source_text):
     for i, sentence in enumerate(sentences):
         anchor = _anchor_text(stored[i])
         for number in _NUMBER.findall(sentence):
-            if number not in anchor:
+            if not re.search(r'(?<!\d)' + re.escape(number) + r'(?!\d)', anchor):
                 return {'sentence': i, 'numbers': [number]}
         words = _WORD_CASED.findall(sentence)
         capitals = [w for w in words[1:] if w[:1].isupper()]
@@ -1096,6 +1109,7 @@ def _validate(svc, source=None, distillate=None):
         source_replaced = source_row['id'] in _explicit_archived(c)
         versions = _versions(c, root_id)
         current = versions[-1]
+        _require_current(distillate, current)
         props = _properties(c, current['claim_id'])
         fails = _fail_count(c, root_id)
         if fails >= 3:
@@ -1142,6 +1156,7 @@ def _accept(svc, source=None, distillate=None, by=None, note=None):
         source_text = bytes(source_row['raw']).decode('utf8', 'replace')
         versions = _versions(c, root_id)
         current = versions[-1]
+        _require_current(distillate, current)
         props = _properties(c, current['claim_id'])
         if _fail_count(c, root_id) >= 3:
             raise Denied('DISTILLATE_LOOP',
@@ -1186,6 +1201,7 @@ def _withdraw(svc, source=None, distillate=None, note=None):
         source_row, root_id = _resolve_target(c, source, distillate)
         versions = _versions(c, root_id)
         current = versions[-1]
+        _require_current(distillate, current)
         if len(versions) == 1:
             raise Denied('INVALID_FIELD', field='action',
                          hint='The extracted v1 cannot be withdrawn; propose a corrected version or dispute the source.')
