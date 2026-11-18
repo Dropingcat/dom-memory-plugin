@@ -361,7 +361,7 @@ RECORDS.update({
         'distillate_id': ('null', 'str'), 'logical_claim_id': ('null', 'str'),
         'effective': ('null', ('opaque',)), 'versions': ('list', ('opaque',)),
         'open_conflicts': ('list', ('opaque',)), 'failed': ('list', 'str'),
-        'review': ('null', ('opaque',)), 'next_steps': ('list', 'NextStep'),
+        'review': ('null', ('opaque',)), 'repaired': 'bool', 'next_steps': ('list', 'NextStep'),
     },
 })
 

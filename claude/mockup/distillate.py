@@ -568,12 +568,17 @@ def _origin_of(props):
     return spans.get('origin') if isinstance(spans, dict) else None
 
 
+def _explicit_archived(c):
+    """Claims retired by an explicit archive event (not by a version link)."""
+    return {r[0] for r in c.execute(
+        "SELECT DISTINCT claim_ref FROM events WHERE kind='archive' AND claim_ref IS NOT NULL")}
+
+
 def _state(c, version, is_v1, source_text, source_replaced=False):
     """§12.5 precedence: superseded > withdrawn > disputed > accepted >
     validated > rejected > extracted > proposed."""
-    from .claim_entry import _archived
     cid = version['claim_id']
-    if source_replaced or cid in _archived(c):
+    if source_replaced or cid in _explicit_archived(c):
         return 'superseded'
     props = _properties(c, cid)
     if 'distillate_withdraw' in props:
@@ -677,7 +682,7 @@ def _record(action, status, **kw):
            'source_id': None, 'source_state': 'active',
            'distillate_id': None, 'logical_claim_id': None,
            'effective': None, 'versions': [], 'open_conflicts': [],
-           'failed': [], 'review': None, 'next_steps': []}
+           'failed': [], 'review': None, 'repaired': False, 'next_steps': []}
     out.update(kw)
     return out
 
@@ -716,14 +721,14 @@ def _show_next(out):
 
 
 def _show(svc, source=None, distillate=None):
-    from .claim_entry import _archived, _lite_only
+    from .claim_entry import _lite_only
     _lite_only(svc)
     svc.scope()
     svc.ready()
     with svc.store.read() as c:
         source_row, root_id = _resolve_target(c, source, distillate)
         source_text = bytes(source_row['raw']).decode('utf8', 'replace')
-        source_replaced = source_row['id'] in _archived(c)
+        source_replaced = source_row['id'] in _explicit_archived(c)
         versions = _versions(c, root_id)
         states = [_state(c, v, k == 1, source_text, source_replaced) for k, v in enumerate(versions, 1)]
         current = versions[-1]
@@ -742,6 +747,328 @@ def _show(svc, source=None, distillate=None):
         return out
 
 
+# ---------------------------------------------------------------------------
+# Checkpoints V1-V8 (§12.6) and the propose writer (§12.5/§12.9).  Every
+# check is pure over the ledger snapshot: same state, same verdict.
+# ---------------------------------------------------------------------------
+
+_NUMBER = re.compile(r'\d+(?:[.,]\d+)?')
+_WORD_CASED = re.compile(r'[0-9A-Za-zА-Яа-яЁё]+')
+_NEGATION = ('не', 'нет', 'never', 'not', 'no')
+_QUANTIFIER = ('всегда', 'никогда', 'только', 'always', 'never', 'only')
+_BOUNDED = {w: re.compile(r'(?<!\w)' + re.escape(w) + r'(?!\w)') for w in set(_NEGATION + _QUANTIFIER)}
+
+
+def _same_text(text):
+    """§12.6: normalized text -- whitespace and case are not a difference."""
+    return re.sub(r'\s+', ' ', text or '').strip().casefold()
+
+
+def _candidate_sentences(text):
+    return [t for (t, _start, _end) in split_spans(text or '')]
+
+
+def resolve_anchors(source_text, anchors):
+    """§12.6 V3 at propose time: one inner array per candidate sentence, each
+    quote a non-empty verbatim substring that occurs exactly once in the
+    source.  Stored spans carry offsets, so a repeated source sentence can be
+    anchored by distinct offsets; the once-rule applies to the caller's quote."""
+    Denied = _denied()
+    if type(anchors) is not list or not anchors:
+        raise Denied('PROPOSAL_INVALID', field='anchors',
+                     hint="'anchors' is one inner array per sentence, each a list of verbatim quotes from the source.")
+    groups = []
+    for i, group in enumerate(anchors):
+        if type(group) is not list or not group or any(type(q) is not str or not q.strip() for q in group):
+            raise Denied('PROPOSAL_INVALID', field='anchors',
+                         hint='anchors[%d] must be a non-empty list of non-empty strings.' % i)
+        resolved = []
+        for quote in group:
+            count = source_text.count(quote)
+            if count == 0:
+                raise Denied('SPAN_NOT_FOUND', field='anchors',
+                             hint='An anchor is not a verbatim part of the source; quote the source exactly.')
+            if count > 1:
+                raise Denied('SPAN_AMBIGUOUS', field='anchors',
+                             hint='An anchor occurs more than once in the source; quote a longer, unique piece.')
+            start = source_text.find(quote)
+            resolved.append({'quote': quote, 'start': start, 'end': start + len(quote)})
+        groups.append({'i': i, 'anchors': resolved})
+    return groups
+
+
+def _anchor_text(group):
+    return ' '.join(a.get('quote') or '' for a in (group.get('anchors') or []))
+
+
+def _check_v1(c, source_row, candidate, source_text):
+    problems = []
+    try:
+        payload = json.loads(source_row['payload'])
+    except (ValueError, TypeError):
+        payload = {}
+    if not is_statement_source(payload) or source_row['id'] in _explicit_archived(c):
+        problems.append('source')
+    meta = payload.get('metadata') or {}
+    if meta.get('source_snapshot_digest') != raw_hash(source_text.encode('utf8')):
+        problems.append('digest')
+    basis = (candidate['payload'].get('anatomy') or {}).get('basis') or []
+    if basis != [source_row['id']]:
+        problems.append('basis')
+    return {'reason': problems[0]} if problems else None
+
+
+def _check_v2(c, candidate, spans):
+    from .claim_entry import _children
+    payload = candidate['payload']
+    problems = []
+    if payload.get('content_type') != 'text':
+        problems.append('type')
+    if payload.get('classification') != 'interpretation':
+        problems.append('classification')
+    if not str(payload.get('purpose') or '').strip():
+        problems.append('purpose')
+    if not isinstance(spans, dict) or spans.get('origin') != 'agent':
+        problems.append('origin')
+    if candidate['claim_id'] in _explicit_archived(c) or candidate['claim_id'] in _children(c):
+        problems.append('current')
+    return {'reason': problems[0]} if problems else None
+
+
+def _check_v3(candidate_text, spans, sentences, source_text):
+    if not 1 <= len(sentences) <= 3:
+        return {'reason': 'sentences', 'count': len(sentences)}
+    stored = spans.get('sentences') if isinstance(spans, dict) else None
+    if not isinstance(stored, list) or len(stored) != len(sentences):
+        return {'reason': 'groups', 'sentences': len(sentences),
+                'groups': len(stored) if isinstance(stored, list) else 0}
+    for i, group in enumerate(stored):
+        anchors = group.get('anchors') if isinstance(group, dict) else None
+        if not isinstance(anchors, list) or not anchors:
+            return {'sentence': i, 'reason': 'empty'}
+        for anchor in anchors:
+            quote = anchor.get('quote') if isinstance(anchor, dict) else None
+            start, end = (anchor.get('start'), anchor.get('end')) if isinstance(anchor, dict) else (None, None)
+            if type(quote) is not str or not quote:
+                return {'sentence': i, 'reason': 'quote'}
+            if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(source_text) \
+                    or source_text[start:end] != quote:
+                return {'sentence': i, 'reason': 'offset', 'quote': quote[:40]}
+    if not isinstance(spans, dict) or spans.get('candidate_digest') != raw_hash(candidate_text.encode('utf8')):
+        return {'reason': 'candidate_digest'}
+    return None
+
+
+def _check_v4(spans, sentences):
+    stored = spans.get('sentences') if isinstance(spans, dict) else None
+    if not isinstance(stored, list) or len(stored) != len(sentences):
+        return {'reason': 'anchors'}
+    for i, sentence in enumerate(sentences):
+        tokens = _tokens(sentence)
+        pool = _tokens(_anchor_text(stored[i]))
+        novel = [t for t in tokens if not any(_same(t, other) for other in pool)]
+        coverage = (len(tokens) - len(novel)) / len(tokens) if tokens else 1.0
+        if len(tokens) <= 3:
+            if novel:
+                return {'sentence': i, 'novel': novel[:5]}
+        elif len(novel) > 2 or coverage < 0.6:
+            return {'sentence': i, 'novel': novel[:5], 'coverage': round(coverage, 2)}
+    return None
+
+
+def _count_markers(text, words):
+    folded = text.casefold().replace('ё', 'е')
+    return {w: len(_BOUNDED[w].findall(folded)) for w in words}
+
+
+def _check_v5(spans, sentences, source_text):
+    stored = spans.get('sentences') if isinstance(spans, dict) else None
+    if not isinstance(stored, list) or len(stored) != len(sentences):
+        return {'reason': 'anchors'}
+    source_fold = source_text.casefold().replace('ё', 'е')
+    for i, sentence in enumerate(sentences):
+        anchor = _anchor_text(stored[i])
+        for number in _NUMBER.findall(sentence):
+            if number not in anchor:
+                return {'sentence': i, 'numbers': [number]}
+        words = _WORD_CASED.findall(sentence)
+        capitals = [w for w in words[1:] if w[:1].isupper()]
+        absent = [w for w in capitals if w.casefold().replace('ё', 'е') not in source_fold]
+        if absent:
+            return {'sentence': i, 'capitals': absent[:5]}
+        for label, marks in (('negation', _NEGATION), ('quantifier', _QUANTIFIER)):
+            here, there = _count_markers(sentence, marks), _count_markers(anchor, marks)
+            differing = [w for w in marks if here[w] != there[w]]
+            if differing:
+                return {'sentence': i, label: differing[:5], 'sentence_counts': {w: here[w] for w in differing},
+                        'anchor_counts': {w: there[w] for w in differing}}
+    return None
+
+
+def _check_v6(sentences, candidate_text, source_text, effective_text):
+    if not 1 <= len(sentences) <= 3:
+        return {'reason': 'sentences', 'count': len(sentences)}
+    for i, sentence in enumerate(sentences):
+        if len(sentence) > 300:
+            return {'sentence': i, 'chars': len(sentence)}
+    total, source_len = len(candidate_text), len(source_text)
+    if source_len >= 200:
+        if total > 0.6 * source_len:
+            return {'reason': 'long', 'chars': total, 'limit': int(0.6 * source_len)}
+    elif total > source_len:
+        return {'reason': 'long', 'chars': total, 'source': source_len}
+    if effective_text is not None and _same_text(candidate_text) == _same_text(effective_text):
+        return {'reason': 'same_as_effective'}
+    return None
+
+
+def _check_v7(c, source_id, candidate_id):
+    if _open_conflicts(c, source_id):
+        return {'target': 'source'}
+    if _open_conflicts(c, candidate_id):
+        return {'target': 'candidate'}
+    return None
+
+
+def run_checks(c, source_row, candidate, spans, effective_text, fail_count):
+    """V1-V8 exactly per §12.6.  Pure over the snapshot ``c``; returns the
+    review body's ``checks`` / ``failed`` / ``detail`` (no timestamp)."""
+    source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+    sentences = _candidate_sentences(candidate['text'])
+    detail = {}
+    for code, problem in (
+        ('V1_SOURCE', _check_v1(c, source_row, candidate, source_text)),
+        ('V2_PROVENANCE', _check_v2(c, candidate, spans)),
+        ('V3_ANCHORS', _check_v3(candidate['text'], spans, sentences, source_text)),
+        ('V4_GROUNDING', _check_v4(spans, sentences)),
+        ('V5_FACTS', _check_v5(spans, sentences, source_text)),
+        ('V6_COMPRESSION', _check_v6(sentences, candidate['text'], source_text, effective_text)),
+        ('V7_DISPUTE', _check_v7(c, source_row['id'], candidate['claim_id'])),
+        ('V8_LOOP', {'failed': fail_count} if fail_count >= 3 else None),
+    ):
+        if problem is not None:
+            detail[code] = problem
+    checks = {('V%d' % i): (next((code for code in detail if code.startswith('V%d_' % i)), 'pass'))
+              for i in range(1, 9)}
+    return {'checks': checks, 'failed': list(detail), 'detail': detail}
+
+
+def _fail_count(c, root_id):
+    """Failed reviews over the whole logical claim: the latest review of each
+    version counts once (§12.6 V8)."""
+    count = 0
+    for version in _versions(c, root_id):
+        review = _properties(c, version['claim_id']).get('distillate_review')
+        if isinstance(review, dict) and review.get('verdict') == 'fail':
+            count += 1
+    return count
+
+
+def _effective_version(c, source_row, versions, source_replaced):
+    """The raw effective version row (newest accepted, else the extracted v1)."""
+    source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+    states = [_state(c, v, k == 1, source_text, source_replaced) for k, v in enumerate(versions, 1)]
+    ref = _effective(c, source_row['id'], versions, states)
+    if ref is None:
+        return None
+    for version in versions:
+        if version['claim_id'] == ref['claim_id']:
+            return version
+    return None
+
+
+def _anchor_quotes(anchors):
+    if type(anchors) is not list:
+        return None
+    out = []
+    for group in anchors:
+        if type(group) is not list or any(type(q) is not str for q in group):
+            return None
+        out.append(list(group))
+    return out
+
+
+def _stored_quotes(spans):
+    return [[a.get('quote') for a in (g.get('anchors') or [])] for g in (spans.get('sentences') or [])]
+
+
+def _write_property(svc, claim_id, name, value, reason):
+    """A property event; a refusal leaves the version unanchored (repair path)."""
+    from . import claim_entry as ce
+    from .admission import Denied
+    try:
+        out = ce.annotate(svc, claim_id, 'property', {'name': name, 'value': value, 'reason': reason})
+    except Denied:
+        return False
+    return isinstance(out, dict) and out.get('status') == 'ANNOTATED'
+
+
+def _proposed_answer(svc, source_id, status, repaired=False):
+    out = _show(svc, source_id, None)
+    out['status'] = status
+    out['action'] = 'propose'
+    out['repaired'] = repaired
+    return out
+
+
+def _propose(svc, source=None, distillate=None, text=None, anchors=None):
+    """§12.5/§12.9: a new version with anchors, or a replay/repair of the
+    current one.  A proposal never displaces the effective version."""
+    from . import claim_entry as ce
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.capability('submit')
+    svc.ready()
+    if type(text) is not str or not text.strip():
+        raise Denied('PROPOSAL_INVALID', field='text', hint="'text' is the candidate distillate (1-3 sentences).")
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+        source_replaced = source_row['id'] in _explicit_archived(c)
+        versions = _versions(c, root_id)
+        current = versions[-1]
+        props = _properties(c, current['claim_id'])
+        fails = _fail_count(c, root_id)
+        if fails >= 3:
+            raise Denied('DISTILLATE_LOOP',
+                         hint='Three failed reviews for this logical claim; the chain is stopped. Ask the user for a new instruction.')
+        if _open_conflicts(c, source_row['id']):
+            raise Denied('DISTILLATE_DISPUTED',
+                         hint='The source is disputed; resolve it before proposing a new version.')
+        same_text = _same_text(text) == _same_text(current['text'])
+        stored = props.get('basis_spans')
+        if same_text and isinstance(stored, dict):
+            supplied = _anchor_quotes(anchors)
+            if supplied is not None and supplied == _stored_quotes(stored):
+                return _proposed_answer(svc, source_row['id'], 'ALREADY_RECORDED')
+            raise Denied('PROPOSAL_CONFLICT',
+                         hint='The current version has this text with other anchors; withdraw it or supply the original anchors.')
+        effective_row = None if same_text else _effective_version(c, source_row, versions, source_replaced)
+        if not same_text and effective_row is not None and _same_text(text) == _same_text(effective_row['text']):
+            raise Denied('NO_IMPROVEMENT',
+                         hint='The candidate equals the effective version; propose a real improvement or keep it.')
+        groups = stored.get('sentences') if (same_text and isinstance(stored, dict)) else None
+        if not isinstance(groups, list):
+            groups = resolve_anchors(source_text, anchors)
+        spans = {'v': 1, 'origin': 'agent', 'candidate_digest': raw_hash(text.encode('utf8')),
+                 'sentences': groups}
+    value = json.dumps(spans, ensure_ascii=False, sort_keys=True)
+    if same_text:
+        repaired = _write_property(svc, current['claim_id'], 'basis_spans', value,
+                                   'distillate proposal anchors repair')
+        return _proposed_answer(svc, source_row['id'], 'ALREADY_RECORDED', repaired=repaired)
+    updated = ce.update(svc, current['claim_id'], text, 'distillate proposal',
+                        idempotency_key='stmt-propose:%s:%s:%s' % (
+                            source_row['id'], spans['candidate_digest'], _anchors_digest(spans)))
+    new_id = updated.get('new_claim_id')
+    if not new_id:
+        return _record('propose', updated.get('status', 'REFUSED'))
+    _write_property(svc, new_id, 'basis_spans', value, 'distillate proposal anchors')
+    return _proposed_answer(svc, source_row['id'], 'PROPOSED')
+
+
 def distillate(svc, action, source=None, distillate=None, text=None, anchors=None, by=None, note=None):
     """The dom_distillate tool (§12.5).  Show is read-only; every write action
     is lite-only and goes through the same scope/ready gates."""
@@ -751,4 +1078,6 @@ def distillate(svc, action, source=None, distillate=None, text=None, anchors=Non
                      hint="'action' is one of: %s." % ', '.join(DISTILLATE_ACTIONS))
     if action == 'show':
         return _show(svc, source, distillate)
+    if action == 'propose':
+        return _propose(svc, source, distillate, text, anchors)
     raise Denied('INVALID_FIELD', field='action', hint="action '%s' is not available yet." % action)

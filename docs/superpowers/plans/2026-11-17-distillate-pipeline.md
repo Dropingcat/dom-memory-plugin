@@ -174,7 +174,7 @@ Implementation rules (pinned):
   - `run_checks(c, source_row, candidate, spans, effective_text, fail_count) -> {"checks","failed","detail"}` — V1–V8 exactly per spec §12.6 (V1 digest `sha256(raw)`; V2 `basis_spans.origin='agent'`; V3 offset equality; V4 `novel<=2`/`coverage>=0.6`, `novel=0` for ≤3 content tokens; V5 numbers, non-initial capitalized tokens, negation/quantifier parity `не/нет/never/not/no`, `всегда/никогда/только/always/never/only`; V6 1–3 sentences ≤300 chars, ≤60% of a ≥200-char source, normalized difference; V7 no open conflict; V8 `fail_count < 3`);
   - `propose` flow: current-version text/anchors pre-checks (`ALREADY_RECORDED` on same normalized text + same anchors; property repair when `basis_spans` is missing; `PROPOSAL_CONFLICT` on same text + different anchors; `NO_IMPROVEMENT` vs the effective version), then `claim_entry.update` (new version, reason `'distillate proposal'`, anatomy `basis`/`purpose` preserved) and `basis_spans` property on the NEW version; a failed property write leaves the version unanchored (repair path above).
 
-- [ ] **Step 1: Write the failing test** `tests/check_distillate_pipeline.py` — per tree: capture a statement with ≥2 sentences (reuse Task 3's capture via import, not the hook); then:
+- [x] **Step 1: Write the failing test** `tests/check_distillate_pipeline.py` — per tree: capture a statement with ≥2 sentences (reuse Task 3's capture via import, not the hook); then:
   - `propose` a faithful compression with valid anchors → `status='PROPOSED'`, `versions` has 2 entries, `effective` still the v1 (rollback guarantee);
   - identical `propose` retry → `ALREADY_RECORDED`, still 2 versions;
   - `propose` with a quote not in the source → `SPAN_NOT_FOUND`; with a twice-occurring quote → `SPAN_AMBIGUOUS`;
@@ -182,13 +182,13 @@ Implementation rules (pinned):
   - `propose` same text with different anchors → `PROPOSAL_CONFLICT`;
   - drift drill: delete the v2 `basis_spans` property row via a scratch DB copy, `propose` the same text again → the property is repaired and `validate` can run (no duplicate version).
 
-- [ ] **Step 2: Run** → FAIL.
+- [x] **Step 2: Run** → FAIL.
 
-- [ ] **Step 3: Implement** `resolve_anchors`, `run_checks` (pure, cursor-in), `propose`.
+- [x] **Step 3: Implement** `resolve_anchors`, `run_checks` (pure, cursor-in), `propose`.
 
-- [ ] **Step 4: Copy byte-identical, verify sha256, run** all three check scripts → PASS.
+- [x] **Step 4: Copy byte-identical, verify sha256, run** all three check scripts → PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat: dom_distillate propose with deterministic V1-V8 gates (П4.6)"`
+- [x] **Step 5: Commit** — `git commit -m "feat: dom_distillate propose with deterministic V1-V8 gates (П4.6)"`
 
 ### Task 6: `validate`, `accept`, `withdraw`, `dispute`, `resolve`, loop stop
 
