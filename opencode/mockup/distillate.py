@@ -23,6 +23,7 @@ here executes it, and a failure never blocks a prompt (the hook catches).
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 
 from .plan_context import _same, _tokens
 from .dom_contract import digest, raw_hash
@@ -525,8 +526,8 @@ def _open_conflicts(c, claim_id):
     for row in c.execute("SELECT kind, payload FROM events WHERE claim_ref=? AND kind IN ('conflict','resolve') ORDER BY seq",
                          (claim_id,)):
         try:
-            event = json.loads(row['payload']).get('value') or {}
-        except (ValueError, TypeError):
+            event = json.loads(row['payload'])['value']['value']
+        except (ValueError, TypeError, KeyError):
             continue
         ref = event.get('conflict_ref')
         if not isinstance(ref, str) or not ref:
@@ -682,7 +683,7 @@ def _record(action, status, **kw):
            'source_id': None, 'source_state': 'active',
            'distillate_id': None, 'logical_claim_id': None,
            'effective': None, 'versions': [], 'open_conflicts': [],
-           'failed': [], 'review': None, 'repaired': False, 'next_steps': []}
+           'failed': [], 'detail': {}, 'review': None, 'repaired': False, 'next_steps': []}
     out.update(kw)
     return out
 
@@ -742,6 +743,7 @@ def _show(svc, source=None, distillate=None):
                       versions=[_public_version(c, v, states[k - 1]) for k, v in enumerate(versions, 1)],
                       open_conflicts=_open_conflicts(c, source_row['id']),
                       failed=list(review.get('failed') or []) if isinstance(review, dict) else [],
+                      detail=review.get('detail') or {} if isinstance(review, dict) else {},
                       review=review if isinstance(review, dict) else None)
         out['next_steps'] = _show_next(out)
         return out
@@ -821,12 +823,14 @@ def _check_v1(c, source_row, candidate, source_text):
 def _check_v2(c, candidate, spans):
     from .claim_entry import _children
     payload = candidate['payload']
+    meta = payload.get('metadata') or {}
+    anatomy = payload.get('anatomy') or {}
     problems = []
     if payload.get('content_type') != 'text':
         problems.append('type')
-    if payload.get('classification') != 'interpretation':
+    if meta.get('classification') != 'interpretation':
         problems.append('classification')
-    if not str(payload.get('purpose') or '').strip():
+    if not str(anatomy.get('purpose') or '').strip():
         problems.append('purpose')
     if not isinstance(spans, dict) or spans.get('origin') != 'agent':
         problems.append('origin')
@@ -1011,6 +1015,13 @@ def _proposed_answer(svc, source_id, status, repaired=False):
     return out
 
 
+def _finish(svc, source_id, status, action):
+    out = _show(svc, source_id, None)
+    out['status'] = status
+    out['action'] = action
+    return out
+
+
 def _propose(svc, source=None, distillate=None, text=None, anchors=None):
     """§12.5/§12.9: a new version with anchors, or a replay/repair of the
     current one.  A proposal never displaces the effective version."""
@@ -1069,6 +1080,176 @@ def _propose(svc, source=None, distillate=None, text=None, anchors=None):
     return _proposed_answer(svc, source_row['id'], 'PROPOSED')
 
 
+VALIDATOR = 'dom-distillate/1'
+
+
+def _validate(svc, source=None, distillate=None):
+    """§12.6: run V1-V8 on the current version and store the review."""
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+        source_replaced = source_row['id'] in _explicit_archived(c)
+        versions = _versions(c, root_id)
+        current = versions[-1]
+        props = _properties(c, current['claim_id'])
+        fails = _fail_count(c, root_id)
+        if fails >= 3:
+            raise Denied('DISTILLATE_LOOP',
+                         hint='Three failed reviews for this logical claim; the chain is stopped. Ask the user for a new instruction.')
+        spans = props.get('basis_spans')
+        spans = spans if isinstance(spans, dict) else {}
+        effective_row = _effective_version(c, source_row, versions, source_replaced)
+        result = run_checks(c, source_row, current, spans,
+                            effective_row['text'] if effective_row else None, fails)
+        source_digest = raw_hash(source_text.encode('utf8'))
+        candidate_digest = current['raw_sha256']
+        anchors_digest = _anchors_digest(spans) if spans else digest({})
+        existing = props.get('distillate_review')
+        if isinstance(existing, dict) and existing.get('validator') == VALIDATOR \
+                and existing.get('candidate_digest') == candidate_digest \
+                and existing.get('anchors_digest') == anchors_digest \
+                and existing.get('source_digest') == source_digest:
+            return _finish(svc, source_row['id'], 'ALREADY_RECORDED', 'validate')
+        review = {'v': 1, 'validator': VALIDATOR, 'at': datetime.now(timezone.utc).isoformat(),
+                  'source_id': source_row['id'], 'source_digest': source_digest,
+                  'candidate_digest': candidate_digest, 'anchors_digest': anchors_digest,
+                  'checks': result['checks'], 'failed': result['failed'], 'detail': result['detail'],
+                  'verdict': 'pass' if not result['failed'] else 'fail'}
+    if not _write_property(svc, current['claim_id'], 'distillate_review',
+                           json.dumps(review, ensure_ascii=False, sort_keys=True), 'distillate validation'):
+        raise Denied('REVIEW_FAILED', hint='The review could not be stored; retry validate.')
+    return _finish(svc, source_row['id'],
+                   'VALIDATED' if review['verdict'] == 'pass' else 'REVIEW_FAILED', 'validate')
+
+
+def _accept(svc, source=None, distillate=None, by=None, note=None):
+    """§12.7: acceptance needs a passing review of this exact version."""
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    by = 'agent' if by is None else by
+    if by not in ('agent', 'user'):
+        raise Denied('INVALID_FIELD', field='by', hint="'by' is agent (default) or user.")
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+        versions = _versions(c, root_id)
+        current = versions[-1]
+        props = _properties(c, current['claim_id'])
+        if _fail_count(c, root_id) >= 3:
+            raise Denied('DISTILLATE_LOOP',
+                         hint='Three failed reviews for this logical claim; the chain is stopped. Ask the user for a new instruction.')
+        review = props.get('distillate_review')
+        if not isinstance(review, dict):
+            raise Denied('REVIEW_REQUIRED',
+                         hint='Acceptance needs a passing validate on this exact version; call validate first.')
+        if review.get('verdict') != 'pass':
+            raise Denied('REVIEW_FAILED',
+                         hint='The latest review of this version failed; fix the text or anchors and propose again.')
+        if not _review_pass(current, review, props.get('basis_spans'), source_text):
+            raise Denied('REVIEW_STALE',
+                         hint='The review no longer matches the text or anchors; run validate again.')
+        if _open_conflicts(c, source_row['id']) or _open_conflicts(c, current['claim_id']):
+            raise Denied('DISTILLATE_DISPUTED',
+                         hint='An open dispute blocks acceptance; resolve it first.')
+        review_digest = _review_digest(review)
+        existing = props.get('distillate_accept')
+        if isinstance(existing, dict) and existing.get('candidate_digest') == current['raw_sha256'] \
+                and existing.get('review_digest') == review_digest \
+                and existing.get('accepted_by') == by:
+            return _finish(svc, source_row['id'], 'ALREADY_RECORDED', 'accept')
+        accepted = {'v': 1, 'candidate_digest': current['raw_sha256'], 'review_digest': review_digest,
+                    'accepted_by': by, 'note': note if type(note) is str else ''}
+    if not _write_property(svc, current['claim_id'], 'distillate_accept',
+                           json.dumps(accepted, ensure_ascii=False, sort_keys=True), 'distillate acceptance'):
+        raise Denied('REVIEW_FAILED', hint='The acceptance could not be stored; retry accept.')
+    return _finish(svc, source_row['id'], 'ACCEPTED', 'accept')
+
+
+def _withdraw(svc, source=None, distillate=None, note=None):
+    """§12.8: withdraw the current version; the effective version falls back."""
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    if type(note) is not str or not note.strip():
+        raise Denied('INVALID_FIELD', field='note', hint="'note' is required: say why the version is withdrawn.")
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        versions = _versions(c, root_id)
+        current = versions[-1]
+        if len(versions) == 1:
+            raise Denied('INVALID_FIELD', field='action',
+                         hint='The extracted v1 cannot be withdrawn; propose a corrected version or dispute the source.')
+        existing = _properties(c, current['claim_id']).get('distillate_withdraw')
+        if isinstance(existing, dict) and existing.get('note') == note:
+            return _finish(svc, source_row['id'], 'ALREADY_RECORDED', 'withdraw')
+    value = json.dumps({'v': 1, 'note': note}, ensure_ascii=False, sort_keys=True)
+    _write_property(svc, current['claim_id'], 'distillate_withdraw', value, 'distillate withdraw')
+    return _finish(svc, source_row['id'], 'WITHDRAWN', 'withdraw')
+
+
+def _target_claim(c, source_row, distillate, field):
+    Denied = _denied()
+    if distillate is None:
+        return source_row['id']
+    if type(distillate) is not str or not distillate.strip():
+        raise Denied('INVALID_FIELD', field=field)
+    row = c.execute('SELECT id FROM claims WHERE id=?', (distillate,)).fetchone()
+    if row is None:
+        raise Denied('NO_STATEMENT', field=field)
+    return distillate
+
+
+def _dispute(svc, source=None, distillate=None, note=None):
+    """§12.8: a conflict on the source (only source given) or on a version."""
+    from . import claim_entry as ce
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    if type(note) is not str or not note.strip():
+        raise Denied('INVALID_FIELD', field='note', hint="'note' is required: say why the statement or version is disputed.")
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        target = _target_claim(c, source_row, distillate, 'distillate')
+        ref = 'stmt:%s' % source_row['id']
+        if any(x['conflict_ref'] == ref for x in _open_conflicts(c, target)):
+            return _finish(svc, source_row['id'], 'ALREADY_RECORDED', 'dispute')
+    ce.annotate(svc, target, 'conflict', {'conflict_ref': ref, 'reason': note})
+    return _finish(svc, source_row['id'], 'DISPUTED', 'dispute')
+
+
+def _resolve(svc, source=None, distillate=None, note=None):
+    """§12.8: close every open conflict on the target; never edits a text."""
+    from . import claim_entry as ce
+    from .claim_entry import _lite_only
+    Denied = _denied()
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    if type(note) is not str or not note.strip():
+        raise Denied('INVALID_FIELD', field='note', hint="'note' is required: say why the dispute is closed.")
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        target = _target_claim(c, source_row, distillate, 'distillate')
+        open_refs = [x['conflict_ref'] for x in _open_conflicts(c, target)]
+    if not open_refs:
+        return _finish(svc, source_row['id'], 'ALREADY_RECORDED', 'resolve')
+    for ref in open_refs:
+        ce.annotate(svc, target, 'resolve', {'conflict_ref': ref, 'reason': note})
+    return _finish(svc, source_row['id'], 'RESOLVED', 'resolve')
+
+
 def distillate(svc, action, source=None, distillate=None, text=None, anchors=None, by=None, note=None):
     """The dom_distillate tool (§12.5).  Show is read-only; every write action
     is lite-only and goes through the same scope/ready gates."""
@@ -1080,4 +1261,12 @@ def distillate(svc, action, source=None, distillate=None, text=None, anchors=Non
         return _show(svc, source, distillate)
     if action == 'propose':
         return _propose(svc, source, distillate, text, anchors)
-    raise Denied('INVALID_FIELD', field='action', hint="action '%s' is not available yet." % action)
+    if action == 'validate':
+        return _validate(svc, source, distillate)
+    if action == 'accept':
+        return _accept(svc, source, distillate, by, note)
+    if action == 'withdraw':
+        return _withdraw(svc, source, distillate, note)
+    if action == 'dispute':
+        return _dispute(svc, source, distillate, note)
+    return _resolve(svc, source, distillate, note)

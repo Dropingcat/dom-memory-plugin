@@ -208,15 +208,15 @@ Implementation rules (pinned):
   - loop stop: `DISTILLATE_LOOP` refuses `propose`/`validate` at the third failure (no reset action);
   - idempotency: validate/accept retries return the existing records (`ALREADY_RECORDED`).
 
-- [ ] **Step 1: Write the failing tests** (append): validate pass → `VALIDATED`; `accept(by='agent')` → `ACCEPTED`, `effective.version` = 2; propose v3 → effective stays v2; V5 drill (candidate drops a `не` / invents a number) → `REVIEW_FAILED` with `detail['V5_FACTS']`, effective unchanged; three failures total → next `propose` → `DISTILLATE_LOOP`; `withdraw` on v3 → effective v2; `dispute` on the source → `source_state='disputed'`, effective None; `resolve` after a correction accepted → dispute closed; `accept` without a review → `REVIEW_REQUIRED`; `accept` after the version's anchors changed → `REVIEW_STALE`; two `accept` retries → one accept record.
+- [x] **Step 1: Write the failing tests** (append): validate pass → `VALIDATED`; `accept(by='agent')` → `ACCEPTED`, `effective.version` = 2; propose v3 → effective stays v2; V5 drill (candidate drops a `не` / invents a number) → `REVIEW_FAILED` with `detail['V5_FACTS']`, effective unchanged; three failures total → next `propose` → `DISTILLATE_LOOP`; `withdraw` on v3 → effective v2; `dispute` on the source → `source_state='disputed'`, effective None; `resolve` after a correction accepted → dispute closed; `accept` without a review → `REVIEW_REQUIRED`; `accept` after the version's anchors changed → `REVIEW_STALE`; two `accept` retries → one accept record.
 
-- [ ] **Step 2: Run** → FAIL.
+- [x] **Step 2: Run** → FAIL.
 
-- [ ] **Step 3: Implement** the five actions + loop counter.
+- [x] **Step 3: Implement** the five actions + loop counter.
 
-- [ ] **Step 4: Copy byte-identical, verify sha256, run** all check scripts → PASS.
+- [x] **Step 4: Copy byte-identical, verify sha256, run** all check scripts → PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat: validate/accept/withdraw/dispute/resolve with built-in rollback and loop stop (П4.6)"`
+- [x] **Step 5: Commit** — `git commit -m "feat: validate/accept/withdraw/dispute/resolve with built-in rollback and loop stop (П4.6)"`
 
 ### Task 7: Documentation, dist, full verification
 

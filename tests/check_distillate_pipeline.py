@@ -34,11 +34,30 @@ os.chdir(project)
 from mockup.paths import plugin_directory
 from mockup.admission import Service
 from mockup import distillate
+from mockup.dom_contract import raw_hash
 
 
 def bad(message):
     print('FAIL: ' + message)
     raise SystemExit(1)
+
+
+def prop_count(claim_id, name):
+    db = sqlite3.connect(os.path.join(project, '.dom-memory', 'main', 'dom.sqlite3'))
+    try:
+        rows = db.execute("SELECT payload FROM events WHERE kind='property' AND claim_ref=? ORDER BY seq",
+                          (claim_id,)).fetchall()
+    finally:
+        db.close()
+    count = 0
+    for (payload,) in rows:
+        try:
+            value = json.loads(payload)['value']['value']
+        except (ValueError, TypeError, KeyError):
+            continue
+        if value.get('name') == name:
+            count += 1
+    return count
 
 
 ROOT = 'Собери память проекта и захват утверждений пользователя.'
@@ -117,6 +136,84 @@ if r7.get('status') != 'ALREADY_RECORDED' or not r7.get('repaired'):
     bad('repair: %r' % r7)
 if len(r7['versions']) != 2 or r7['versions'][-1]['origin'] != 'agent':
     bad('repair must not duplicate the version: %r' % r7['versions'])
+
+# 7. validate + accept the v2; retries return the existing records
+r8 = svc.distillate('validate', source=sid)
+if r8.get('status') != 'VALIDATED' or r8.get('failed'):
+    bad('validate: %r' % r8)
+r9 = svc.distillate('validate', source=sid)
+if r9.get('status') != 'ALREADY_RECORDED':
+    bad('validate retry: %r' % r9)
+r10 = svc.distillate('accept', source=sid, by='agent')
+if r10.get('status') != 'ACCEPTED' or (r10.get('effective') or {}).get('version') != 2:
+    bad('accept: %r' % r10)
+r11 = svc.distillate('accept', source=sid, by='agent', note='a second note is audit text only')
+if r11.get('status') != 'ALREADY_RECORDED':
+    bad('accept retry: %r' % r11)
+if prop_count(v2, 'distillate_review') != 1 or prop_count(v2, 'distillate_accept') != 1:
+    bad('retries must not duplicate the review/accept records')
+
+# 8. a new proposal keeps the accepted v2 effective; acceptance gates are hard
+COMPRESSED2 = 'Детерминированный слой фиксируется, проверяемость результата важна.'
+r12 = svc.distillate('propose', source=sid, text=COMPRESSED2, anchors=ANCHORS)
+if r12.get('status') != 'PROPOSED':
+    bad('propose v3: %r' % r12)
+v3 = r12['versions'][-1]['claim_id']
+if (r12.get('effective') or {}).get('claim_id') != v2:
+    bad('the accepted v2 must stay effective: %r' % r12.get('effective'))
+r13 = svc.distillate('accept', source=sid)
+if r13.get('status') != 'REVIEW_REQUIRED':
+    bad('accept without a review: %r' % r13)
+r14 = svc.distillate('validate', source=sid)
+if r14.get('status') != 'VALIDATED':
+    bad('validate v3: %r' % r14)
+quote = ANCHORS[0][0]
+start = STMT.find(quote)
+spans2 = {'v': 1, 'origin': 'agent', 'candidate_digest': raw_hash(COMPRESSED2.encode('utf8')),
+          'sentences': [{'i': 0, 'anchors': [{'quote': quote, 'start': start, 'end': start + len(quote)}]}]}
+svc.annotate(v3, 'property', name='basis_spans',
+             value=json.dumps(spans2, ensure_ascii=False, sort_keys=True), reason='test anchors drift')
+r15 = svc.distillate('accept', source=sid)
+if r15.get('status') != 'REVIEW_STALE':
+    bad('accept after the anchors changed: %r' % r15)
+
+# 9. withdraw the current version: the accepted v2 is effective again
+r16 = svc.distillate('withdraw', source=sid, note='superseded by a corrected version')
+if r16.get('status') != 'WITHDRAWN' or (r16.get('effective') or {}).get('claim_id') != v2:
+    bad('withdraw: %r' % r16)
+
+# 10. V5 facts gate; three failures stop the chain
+r17 = svc.distillate('propose', source=sid, text='Мы фиксируем детерминированный слой 7 раз.',
+                     anchors=[['Мы фиксируем детерминированный слой.']])
+if r17.get('status') != 'PROPOSED':
+    bad('propose v4: %r' % r17)
+r18 = svc.distillate('validate', source=sid)
+if r18.get('status') != 'REVIEW_FAILED' or 'V5_FACTS' not in r18.get('failed', []) \
+        or 'V5_FACTS' not in (r18.get('detail') or {}):
+    bad('the invented number must fail V5: %r' % r18)
+if (r18.get('effective') or {}).get('claim_id') != v2:
+    bad('a rejected version must not displace v2: %r' % r18.get('effective'))
+for number in ('8', '9'):
+    p = svc.distillate('propose', source=sid, text='Мы фиксируем детерминированный слой %s раз.' % number,
+                       anchors=[['Мы фиксируем детерминированный слой.']])
+    if p.get('status') != 'PROPOSED':
+        bad('propose a failing version: %r' % p)
+    v = svc.distillate('validate', source=sid)
+    if v.get('status') != 'REVIEW_FAILED':
+        bad('the failing version must be REVIEW_FAILED: %r' % v)
+r19 = svc.distillate('propose', source=sid, text='Мы фиксируем детерминированный слой 10 раз.',
+                     anchors=[['Мы фиксируем детерминированный слой.']])
+if r19.get('status') != 'DISTILLATE_LOOP':
+    bad('three failures must stop the chain: %r' % r19)
+
+# 11. a source dispute makes every version unusable; resolve restores the fallback
+r20 = svc.distillate('dispute', source=sid, note='the user says this was said in another sense')
+if r20.get('status') != 'DISPUTED' or r20.get('source_state') != 'disputed' or r20.get('effective') is not None:
+    bad('dispute the source: %r' % r20)
+r21 = svc.distillate('resolve', source=sid, note='the user confirmed the wording; the accepted v2 is the correction')
+if r21.get('status') != 'RESOLVED' or r21.get('source_state') != 'active' \
+        or (r21.get('effective') or {}).get('claim_id') != v2:
+    bad('resolve: %r' % r21)
 print('PASS')
 '''
 
