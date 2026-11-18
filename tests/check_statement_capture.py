@@ -18,7 +18,12 @@ opencode/) and verifies the ledger directly in SQLite:
 6. the same statement with different whitespace is one source (normalized
    idempotency key), the repeat prints nothing;
 7. an empty prompt is a silent no-op;
-8. with DOM_AUTOSTART=0 and no database the hook exits 0 and starts nothing.
+8. with DOM_AUTOSTART=0 and no database the hook exits 0 and starts nothing;
+9. `dom_distillate(action="show", source=...)` reads the captured chain back
+   through the real server wiring (dispatch + public projection): v1 is
+   ``extracted`` and effective, two reads are identical, an unknown source is
+   a structured NO_STATEMENT refusal with a hint, and `show` without a target
+   is INVALID_FIELD.
 
     python tests/check_statement_capture.py
 
@@ -49,6 +54,43 @@ LINE_RE = re.compile(r"\[DOM project memory\] statement (\S+); distillate (\S+) 
 def run_hook(tree, project, env, prompt, session='s1'):
     payload = json.dumps({'prompt': prompt, 'session_id': session}, ensure_ascii=False)
     return subprocess.run([PY, '-B', str(REPO / tree / 'hooks' / 'plan_check_hook.py')], input=payload,
+                          capture_output=True, text=True, encoding='utf8', errors='replace',
+                          env=env, cwd=str(project), timeout=120)
+
+
+# The same call path the MCP server uses, minus the mcp transport import (the
+# test interpreter has no mcp package): the tool must be declared in both
+# server routing tables, the Service delegate is called directly, and the
+# answer goes through the public projection (closed schema + refusal hints).
+TOOL_SNIPPET = r'''
+import ast, json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from mockup.paths import plugin_directory
+from mockup.admission import Service
+from mockup import claim_entry, public_dto
+src = (pathlib.Path(sys.argv[1]) / 'mockup' / 'server.py').read_text('utf8')
+tables = {}
+for node in ast.parse(src).body:
+    if (isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Dict)
+            and node.targets[0].id in ('LITE_SIGNATURE', 'HANDLERS')):
+        tables[node.targets[0].id] = {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
+for table in ('LITE_SIGNATURE', 'HANDLERS'):
+    if 'dom_distillate' not in tables.get(table, set()):
+        raise SystemExit('wiring missing: ' + table)
+assert 'dom_distillate' in public_dto.LITE_RESPONSES
+assert 'dom_distillate' in claim_entry.TOOL_DOCS
+svc = Service(plugin_directory(), profile='lite', role='owner')
+args = json.loads(sys.argv[2])
+action = args.pop('action')
+result = svc.distillate(action, **args)
+print(json.dumps(public_dto.project_tool('dom_distillate', result, scope=svc.context.branches, profile='lite'),
+                 ensure_ascii=False, sort_keys=True))
+'''
+
+
+def call_tool(tree, project, env, **args):
+    return subprocess.run([PY, '-B', '-c', TOOL_SNIPPET, str(REPO / tree), json.dumps(args, ensure_ascii=False)],
                           capture_output=True, text=True, encoding='utf8', errors='replace',
                           env=env, cwd=str(project), timeout=120)
 
@@ -203,8 +245,50 @@ def check(tree, distillate):
         if r8.returncode != 0 or (empty / '.dom-memory').exists():
             print('FAIL[%s]: DOM_AUTOSTART=0 must start nothing and exit 0: rc=%s' % (tree, r8.returncode))
             return False
+
+        # 9. dom_distillate(show) reads the captured chain back through the
+        #    server wiring: v1 is extracted and effective
+        r9 = call_tool(tree, project, env, action='show', source=source_id)
+        if r9.returncode != 0 or not r9.stdout.strip():
+            print('FAIL[%s]: show crashed: rc=%s err=%r' % (tree, r9.returncode, r9.stderr[-400:]))
+            return False
+        shown = json.loads(r9.stdout)
+        if shown.get('status') != 'DISTILLATE_SHOWN':
+            print('FAIL[%s]: show must answer DISTILLATE_SHOWN: %r' % (tree, shown))
+            return False
+        if not shown.get('versions') or shown['versions'][0].get('state') != 'extracted':
+            print('FAIL[%s]: v1 must be extracted: %r' % (tree, shown.get('versions')))
+            return False
+        eff = shown.get('effective') or {}
+        if eff.get('claim_id') != distillate_id or eff.get('origin') != 'extract':
+            print('FAIL[%s]: effective must be the extracted v1: %r' % (tree, eff))
+            return False
+
+        # 10. two consecutive reads are identical (nothing mutable in show)
+        r10 = call_tool(tree, project, env, action='show', source=source_id)
+        a, b = json.loads(r9.stdout), json.loads(r10.stdout)
+        a.pop('read_snapshot', None)
+        b.pop('read_snapshot', None)
+        if a != b:
+            print('FAIL[%s]: show is not deterministic across reads' % tree)
+            return False
+
+        # 11. an unknown source is a structured refusal with a hint, never a crash
+        r11 = call_tool(tree, project, env, action='show', source='no-such-id')
+        out11 = json.loads(r11.stdout) if r11.stdout.strip() else {}
+        if out11.get('status') != 'NO_STATEMENT' or not out11.get('hint'):
+            print('FAIL[%s]: unknown source must refuse NO_STATEMENT with a hint: %r' % (tree, out11))
+            return False
+
+        # 12. show needs a target
+        r12 = call_tool(tree, project, env, action='show')
+        out12 = json.loads(r12.stdout) if r12.stdout.strip() else {}
+        if out12.get('status') != 'INVALID_FIELD':
+            print('FAIL[%s]: show without source/distillate must be INVALID_FIELD: %r' % (tree, out12))
+            return False
         con.close()
-        print('  %s/: PASS — root skipped, statement captured with anchors, questions and lone markers quiet, dedupe holds' % tree)
+        print('  %s/: PASS — root skipped, statement captured with anchors, questions and lone markers quiet, '
+              'dedupe holds, show reads the chain' % tree)
         return True
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

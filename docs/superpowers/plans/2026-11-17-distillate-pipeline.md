@@ -1,4 +1,4 @@
-# Distillate pipeline (stage 3, П4.1 + П4.6) Implementation Plan
+﻿# Distillate pipeline (stage 3, П4.1 + П4.6) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -150,15 +150,15 @@ Implementation rules (pinned):
   - `distillate(svc, action, source=None, distillate=None, text=None, anchors=None, by=None, note=None) -> dict` — uniform record keys: `status, simulated, action, source_id, source_state, distillate_id, logical_claim_id, effective, versions, open_conflicts, failed, review, next_steps`;
   - statuses `DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED`; refusal codes `NO_STATEMENT` (source/distillate not found or not a statement), plus the shared codes of later tasks.
 
-- [ ] **Step 1: Write the failing test** (append to `tests/check_statement_capture.py`): after the capture scenario — `show` by source id returns `status='DISTILLATE_SHOWN'`, `versions[0]['state']=='extracted'`, `effective` points at the v1 with `origin='extract'`; two consecutive `show` runs produce identical JSON except `read_snapshot`; `show`/any action with `source='no-such-id'` → status `NO_STATEMENT` with a hint; `show` requires `source` or `distillate` (else `INVALID_FIELD`).
+- [x] **Step 1: Write the failing test** (append to `tests/check_statement_capture.py`): after the capture scenario — `show` by source id returns `status='DISTILLATE_SHOWN'`, `versions[0]['state']=='extracted'`, `effective` points at the v1 with `origin='extract'`; two consecutive `show` runs produce identical JSON except `read_snapshot`; `show`/any action with `source='no-such-id'` → status `NO_STATEMENT` with a hint; `show` requires `source` or `distillate` (else `INVALID_FIELD`).
 
-- [ ] **Step 2: Run** → FAIL (`dom_distillate` unknown tool / record missing).
+- [x] **Step 2: Run** → FAIL (`dom_distillate` unknown tool / record missing).
 
-- [ ] **Step 3: Implement** the five wiring edits + states/effective/show. `TOOL_DOCS` entry: summary per spec §12.5 tool surface; arguments `action` (required, enum in description), `source`, `distillate`, `text`, `anchors`, `by`, `note`; example `{"action": "show", "source": "<source_id>"}`.
+- [x] **Step 3: Implement** the five wiring edits + states/effective/show. `TOOL_DOCS` entry: summary per spec §12.5 tool surface; arguments `action` (required, enum in description), `source`, `distillate`, `text`, `anchors`, `by`, `note`; example `{"action": "show", "source": "<source_id>"}`.
 
-- [ ] **Step 4: Copy byte-identical (5 files) to `claude/`, verify sha256, run** both check scripts → PASS.
+- [x] **Step 4: Copy byte-identical (5 files) to `claude/`, verify sha256, run** both check scripts → PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat: dom_distillate show with ledger-computed states (П4.6)"`
+- [x] **Step 5: Commit** — `git commit -m "feat: dom_distillate show with ledger-computed states (П4.6)"`
 
 ### Task 5: `propose` + checkpoints V1–V8
 

@@ -25,7 +25,7 @@ import json
 import re
 
 from .plan_context import _same, _tokens
-from .dom_contract import raw_hash
+from .dom_contract import digest, raw_hash
 
 # ---------------------------------------------------------------------------
 # The marker pack (§12.3).  Appending words is a release change: bump
@@ -355,9 +355,11 @@ def _existing_receipt(svc, key):
 
 def is_statement_source(item):
     """A current source quote produced by the capture: metadata source_ref
-    'session:...' and locator 'prompt:...'."""
+    'session:...' and locator 'prompt:...' (accepts a claim payload or a
+    candidate item -- 'content_type' or 'type')."""
     meta = (item or {}).get('metadata') or {}
-    return (item or {}).get('type') == 'quote' \
+    typ = (item or {}).get('content_type') or (item or {}).get('type')
+    return typ == 'quote' \
         and str(meta.get('source_ref', '')).startswith(STMT_SOURCE_PREFIX) \
         and str(meta.get('locator', '')).startswith(STMT_LOCATOR_PREFIX)
 
@@ -443,3 +445,310 @@ def capture(svc, prompt, session=None):
             line = '[DOM project memory] statement %s; no distillate (no qualifying sentence).' % source_id
     return _result('ALREADY_RECORDED' if already else 'STATEMENT_RECORDED',
                    source_id=source_id, distillate_id=distillate_id, repaired=repaired, line=line)
+
+
+# ---------------------------------------------------------------------------
+# The read side (§12.5/§12.7): versions, states and the effective version are
+# always recomputed from the ledger.  Nothing here is a stored status.
+# ---------------------------------------------------------------------------
+
+DISTILLATE_ACTIONS = ('show', 'propose', 'validate', 'accept', 'withdraw', 'dispute', 'resolve')
+
+
+def _denied():
+    from .admission import Denied
+    return Denied
+
+
+def _json_value(value):
+    """A property value stored as JSON text -> the object; anything else as is."""
+    if isinstance(value, str) and value[:1] in ('{', '['):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _properties(c, claim_id):
+    """claim_id -> {name: parsed value}; the latest write wins."""
+    out = {}
+    for row in c.execute("SELECT payload FROM events WHERE claim_ref=? AND kind='property' ORDER BY seq",
+                         (claim_id,)):
+        try:
+            event = json.loads(row['payload'])['value']['value']
+        except (ValueError, TypeError, KeyError):
+            continue
+        name = event.get('name')
+        if isinstance(name, str) and name:
+            out[name] = _json_value(event.get('value'))
+    return out
+
+
+def _chain(c, claim_id):
+    """The whole version chain containing claim_id, oldest -> newest."""
+    from .claim_entry import _children
+    children = _children(c)
+    parent = {new: old for old, new in children.items()}
+    root, seen = claim_id, set()
+    while root in parent and root not in seen:
+        seen.add(root)
+        root = parent[root]
+    out, cur, seen = [], root, set()
+    while cur and cur not in seen:
+        seen.add(cur)
+        row = c.execute('SELECT * FROM claims WHERE id=?', (cur,)).fetchone()
+        if row is None:
+            break
+        out.append(row)
+        cur = children.get(cur)
+    return out
+
+
+def _versions(c, claim_id):
+    """Oldest -> newest: claim_id, version, text, raw_sha256, payload."""
+    out = []
+    for k, row in enumerate(_chain(c, claim_id), 1):
+        try:
+            payload = json.loads(row['payload'])
+        except (ValueError, TypeError):
+            payload = {}
+        out.append({'claim_id': row['id'], 'version': k,
+                    'text': bytes(row['raw']).decode('utf8', 'replace'),
+                    'raw_sha256': row['raw_sha256'], 'payload': payload})
+    return out
+
+
+def _open_conflicts(c, claim_id):
+    """conflict events on claim_id with no later resolve of the same ref."""
+    open_refs = []
+    for row in c.execute("SELECT kind, payload FROM events WHERE claim_ref=? AND kind IN ('conflict','resolve') ORDER BY seq",
+                         (claim_id,)):
+        try:
+            event = json.loads(row['payload']).get('value') or {}
+        except (ValueError, TypeError):
+            continue
+        ref = event.get('conflict_ref')
+        if not isinstance(ref, str) or not ref:
+            continue
+        if row['kind'] == 'conflict':
+            if ref not in open_refs:
+                open_refs.append(ref)
+        elif ref in open_refs:
+            open_refs.remove(ref)
+    return [{'conflict_ref': ref} for ref in open_refs]
+
+
+def _anchors_digest(spans):
+    return digest({k: v for k, v in spans.items() if k != 'candidate_digest'})
+
+
+def _review_digest(review):
+    return digest({k: v for k, v in review.items() if k != 'at'})
+
+
+def _review_pass(version, review, spans, source_text):
+    if not isinstance(review, dict) or review.get('verdict') != 'pass':
+        return False
+    if review.get('candidate_digest') != version['raw_sha256']:
+        return False
+    if review.get('source_digest') != raw_hash(source_text.encode('utf8')):
+        return False
+    return isinstance(spans, dict) and review.get('anchors_digest') == _anchors_digest(spans)
+
+
+def _accept_matches(version, review, accept):
+    return (isinstance(accept, dict) and isinstance(review, dict)
+            and accept.get('candidate_digest') == version['raw_sha256']
+            and accept.get('review_digest') == _review_digest(review))
+
+
+def _origin_of(props):
+    spans = props.get('basis_spans')
+    return spans.get('origin') if isinstance(spans, dict) else None
+
+
+def _state(c, version, is_v1, source_text, source_replaced=False):
+    """§12.5 precedence: superseded > withdrawn > disputed > accepted >
+    validated > rejected > extracted > proposed."""
+    from .claim_entry import _archived
+    cid = version['claim_id']
+    if source_replaced or cid in _archived(c):
+        return 'superseded'
+    props = _properties(c, cid)
+    if 'distillate_withdraw' in props:
+        return 'withdrawn'
+    if _open_conflicts(c, cid):
+        return 'disputed'
+    review = props.get('distillate_review')
+    spans = props.get('basis_spans')
+    if _review_pass(version, review, spans, source_text) and _accept_matches(version, review, props.get('distillate_accept')):
+        return 'accepted'
+    if isinstance(review, dict) and review.get('verdict') == 'pass':
+        return 'validated'
+    if isinstance(review, dict) and review.get('verdict') == 'fail':
+        return 'rejected'
+    if is_v1 and isinstance(spans, dict) and spans.get('origin') == 'extract':
+        return 'extracted'
+    return 'proposed'
+
+
+def _effective(c, source_id, versions, states):
+    """§12.5 effective: no source conflict; newest accepted, else extracted v1."""
+    if _open_conflicts(c, source_id):
+        return None
+    for version, state in zip(reversed(versions), reversed(states)):
+        if state == 'accepted' and not _open_conflicts(c, version['claim_id']):
+            return {'claim_id': version['claim_id'], 'version': version['version'],
+                    'origin': _origin_of(_properties(c, version['claim_id']))}
+    if versions and states[0] == 'extracted' and not _open_conflicts(c, versions[0]['claim_id']):
+        return {'claim_id': versions[0]['claim_id'], 'version': 1, 'origin': 'extract'}
+    return None
+
+
+def _root_for_source(c, source_id):
+    """The v1 claim of the logical distillate captured for this source."""
+    from .claim_entry import _children
+    replaced = set(_children(c).values())
+    for row in c.execute("SELECT id, payload FROM claims WHERE content_type='text' AND origin_version=?",
+                         (STMT_EXTRACT_VERSION,)):
+        if row['id'] in replaced:
+            continue                     # a later version, not the root of a chain
+        try:
+            payload = json.loads(row['payload'])
+        except (ValueError, TypeError):
+            continue
+        if ((payload.get('anatomy') or {}).get('basis') or []) == [source_id]:
+            return row['id']
+    return None
+
+
+def _statement_source_row(c, claim_id, field):
+    row = c.execute('SELECT id, content_type, raw, payload FROM claims WHERE id=?', (claim_id,)).fetchone()
+    if row is None or row['content_type'] != 'quote':
+        raise _denied()('NO_STATEMENT', field=field)
+    try:
+        payload = json.loads(row['payload'])
+    except (ValueError, TypeError):
+        payload = None
+    if not is_statement_source(payload):
+        raise _denied()('NO_STATEMENT', field=field)
+    return row
+
+
+def _resolve_target(c, source, distillate):
+    """(source_row, root_id) for show and every write action; NO_STATEMENT
+    when the id is not a captured statement."""
+    Denied = _denied()
+    if source is None and distillate is None:
+        raise Denied('INVALID_FIELD', field='source',
+                     hint="'show' needs 'source' (the statement quote) or 'distillate' (any version id).")
+    source_id = root_id = None
+    if distillate is not None:
+        if type(distillate) is not str or not distillate.strip():
+            raise Denied('INVALID_FIELD', field='distillate')
+        row = c.execute('SELECT id, content_type FROM claims WHERE id=?', (distillate,)).fetchone()
+        if row is None or row['content_type'] != 'text':
+            raise Denied('NO_STATEMENT', field='distillate')
+        root_id = _chain(c, distillate)[0]['id']
+        root_payload = json.loads(c.execute('SELECT payload FROM claims WHERE id=?', (root_id,)).fetchone()['payload'])
+        basis = (root_payload.get('anatomy') or {}).get('basis') or []
+        if len(basis) != 1:
+            raise Denied('NO_STATEMENT', field='distillate')
+        source_id = basis[0]
+    if source is not None:
+        if type(source) is not str or not source.strip():
+            raise Denied('INVALID_FIELD', field='source')
+        if source_id is not None and source_id != source:
+            raise Denied('NO_STATEMENT', field='source',
+                         hint='source and distillate belong to different statements.')
+        source_id = source
+    source_row = _statement_source_row(c, source_id, 'source')
+    if root_id is None:
+        root_id = _root_for_source(c, source_id)
+        if root_id is None:
+            raise Denied('NO_STATEMENT', field='source')
+    return source_row, root_id
+
+
+def _record(action, status, **kw):
+    """The uniform answer of every action (§12.5): state, effective, next steps."""
+    out = {'status': status, 'simulated': True, 'action': action,
+           'source_id': None, 'source_state': 'active',
+           'distillate_id': None, 'logical_claim_id': None,
+           'effective': None, 'versions': [], 'open_conflicts': [],
+           'failed': [], 'review': None, 'next_steps': []}
+    out.update(kw)
+    return out
+
+
+def _public_version(c, version, state):
+    props = _properties(c, version['claim_id'])
+    out = {'claim_id': version['claim_id'], 'version': version['version'], 'state': state,
+           'origin': _origin_of(props), 'raw_sha256': version['raw_sha256'], 'text': version['text']}
+    for name, key in (('distillate_review', 'review'), ('distillate_accept', 'accept'),
+                      ('distillate_withdraw', 'withdraw')):
+        if name in props:
+            out[key] = props[name]
+    return out
+
+
+def _show_next(out):
+    sid = out['source_id']
+    if out['source_state'] == 'superseded':
+        return [{'tool': 'dom_find', 'arguments': {'query': '<statement>', 'type': 'quote'},
+                 'why': 'the source was replaced; read the new source and its distillate'}]
+    if out['source_state'] == 'disputed':
+        return [{'tool': 'dom_distillate', 'arguments': {'action': 'resolve', 'source': sid, 'note': '<why the dispute is closed>'},
+                 'why': 'the source is disputed; no distillate is effective until it is resolved'}]
+    if out['effective'] is None:
+        return [{'tool': 'dom_distillate',
+                 'arguments': {'action': 'propose', 'source': sid, 'text': '<text>', 'anchors': [['<verbatim quote>']]},
+                 'why': 'no version is effective; propose a grounded candidate'}]
+    state = out['versions'][-1]['state'] if out['versions'] else None
+    if state in ('proposed', 'rejected'):
+        return [{'tool': 'dom_distillate', 'arguments': {'action': 'validate', 'source': sid},
+                 'why': 'run the V1-V8 gates on the current version'}]
+    if state == 'validated':
+        return [{'tool': 'dom_distillate', 'arguments': {'action': 'accept', 'source': sid, 'by': 'agent'},
+                 'why': 'the current version passed the gates; accept it to make it effective'}]
+    return []
+
+
+def _show(svc, source=None, distillate=None):
+    from .claim_entry import _archived, _lite_only
+    _lite_only(svc)
+    svc.scope()
+    svc.ready()
+    with svc.store.read() as c:
+        source_row, root_id = _resolve_target(c, source, distillate)
+        source_text = bytes(source_row['raw']).decode('utf8', 'replace')
+        source_replaced = source_row['id'] in _archived(c)
+        versions = _versions(c, root_id)
+        states = [_state(c, v, k == 1, source_text, source_replaced) for k, v in enumerate(versions, 1)]
+        current = versions[-1]
+        props = _properties(c, current['claim_id'])
+        review = props.get('distillate_review')
+        out = _record('show', 'DISTILLATE_SHOWN', source_id=source_row['id'],
+                      source_state=('superseded' if source_replaced else
+                                    'disputed' if _open_conflicts(c, source_row['id']) else 'active'),
+                      distillate_id=current['claim_id'], logical_claim_id=root_id,
+                      effective=_effective(c, source_row['id'], versions, states),
+                      versions=[_public_version(c, v, states[k - 1]) for k, v in enumerate(versions, 1)],
+                      open_conflicts=_open_conflicts(c, source_row['id']),
+                      failed=list(review.get('failed') or []) if isinstance(review, dict) else [],
+                      review=review if isinstance(review, dict) else None)
+        out['next_steps'] = _show_next(out)
+        return out
+
+
+def distillate(svc, action, source=None, distillate=None, text=None, anchors=None, by=None, note=None):
+    """The dom_distillate tool (§12.5).  Show is read-only; every write action
+    is lite-only and goes through the same scope/ready gates."""
+    Denied = _denied()
+    if type(action) is not str or action not in DISTILLATE_ACTIONS:
+        raise Denied('INVALID_FIELD', field='action',
+                     hint="'action' is one of: %s." % ', '.join(DISTILLATE_ACTIONS))
+    if action == 'show':
+        return _show(svc, source, distillate)
+    raise Denied('INVALID_FIELD', field='action', hint="action '%s' is not available yet." % action)

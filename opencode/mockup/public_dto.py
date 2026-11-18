@@ -355,6 +355,14 @@ RECORDS.update({
         'changed_by': ('null', 'str'), 'changed_at': ('null', 'str'), 'item_paths': ('list', 'str'),
         'next_steps': ('list', 'NextStep'),
     },
+    'DistillateState': {
+        'status': 'str', 'simulated': 'bool', 'action': 'str',
+        'source_id': ('null', 'str'), 'source_state': 'str',
+        'distillate_id': ('null', 'str'), 'logical_claim_id': ('null', 'str'),
+        'effective': ('null', ('opaque',)), 'versions': ('list', ('opaque',)),
+        'open_conflicts': ('list', ('opaque',)), 'failed': ('list', 'str'),
+        'review': ('null', ('opaque',)), 'next_steps': ('list', 'NextStep'),
+    },
 })
 
 # tool -> top-level public schema (healthy or fixed error surface)
@@ -388,6 +396,8 @@ LITE_RESPONSES = {
     'dom_accept': ('Accepted', ('DEMO_ADMITTED',)),
     'dom_extract_submit': ('Extracted', ('EXTRACTED',)),
     'dom_annotate': ('Annotated', ('ANNOTATED',)),
+    'dom_distillate': ('DistillateState', ('DISTILLATE_SHOWN', 'PROPOSED', 'ALREADY_RECORDED', 'VALIDATED',
+                                           'REVIEW_FAILED', 'ACCEPTED', 'WITHDRAWN', 'DISPUTED', 'RESOLVED')),
 }
 DOMAIN_ERROR_FIELDS = frozenset(RECORDS['DomainError'])
 
@@ -454,6 +464,42 @@ _HELP = {
     'NO_SUCH_CANDIDATE': (('', None), ('No candidate with this id in this project. Pending candidates are listed by dom_resume.', 'dom_resume')),
     'NO_SUCH_CLAIM': (('', None), ('No claim with this id in this project. Find the id with dom_find.', 'dom_find')),
     'NOT_CURRENT': (('', None), ('This claim version was already replaced. Update the current version (claim_id in this answer, or find it with dom_find).', 'dom_find')),
+    'NO_STATEMENT': (
+        ('The id is not a captured statement source or a distillate version of one. Take the ids from the capture line or the statement ledger.', 'dom_distillate'),
+        ('No captured statement with this id. Take source/distillate from the [DOM project memory] statement line, or call dom_distillate(action="show", source=<id>).', 'dom_distillate')),
+    'PROPOSAL_INVALID': (
+        ('The proposal is malformed: text and one inner anchors array per sentence are required.', 'dom_distillate'),
+        ('The proposal needs text (1-3 sentences) and anchors: one inner array per sentence, each a list of verbatim quotes from the source.', 'dom_distillate')),
+    'PROPOSAL_CONFLICT': (
+        ('The current version has the same normalized text with different anchors. Withdraw it or supply the original anchors.', 'dom_distillate'),
+        ('The current version already has this text with other anchors. Withdraw it or supply the original anchors.', 'dom_distillate')),
+    'SPAN_NOT_FOUND': (
+        ('An anchor is not a verbatim substring of the source.', 'dom_distillate'),
+        ('An anchor is not a verbatim part of the source. Quote the source exactly (copy the sentence).', 'dom_distillate')),
+    'SPAN_AMBIGUOUS': (
+        ('An anchor occurs more than once in the source; use a longer unique quote.', 'dom_distillate'),
+        ('An anchor occurs more than once in the source; quote a longer, unique piece.', 'dom_distillate')),
+    'NO_IMPROVEMENT': (
+        ('The candidate text equals the effective version (normalized). Propose a real improvement or keep the effective version.', 'dom_distillate'),
+        ('The candidate is the same text as the effective version. Propose a real improvement or keep it.', 'dom_distillate')),
+    'REVIEW_REQUIRED': (
+        ('Acceptance needs a passing review of this exact version: run validate first.', 'dom_distillate'),
+        ('Acceptance needs a passing validate on this exact version: call dom_distillate(action="validate", source=<id>) first.', 'dom_distillate')),
+    'REVIEW_FAILED': (
+        ('The latest review of this version failed; fix the text/anchors and propose again.', 'dom_distillate'),
+        ('The latest review failed; fix the text or anchors and propose again.', 'dom_distillate')),
+    'REVIEW_STALE': (
+        ('The review does not match the current text or anchors (they changed). Run validate again.', 'dom_distillate'),
+        ('The review no longer matches the text or anchors. Run validate again.', 'dom_distillate')),
+    'DISTILLATE_DISPUTED': (
+        ('An open conflict on the source or this version blocks the action; resolve it first.', 'dom_distillate'),
+        ('An open dispute blocks this action. Resolve it with dom_distillate(action="resolve", ...).', 'dom_distillate')),
+    'DISTILLATE_LOOP': (
+        ('Three failed reviews for this logical claim; the chain is stopped. Ask the user for a new instruction (a new source starts a new chain).', 'dom_distillate'),
+        ('Three failed reviews: the chain is stopped, there is no reset. Ask the user; a new instruction becomes a new source.', 'dom_distillate')),
+    'VARIANT_CONFLICT': (
+        ('Another accepted variant of the same source exists; converge on one text.', 'dom_distillate'),
+        ('Another accepted variant of this source exists; keep one text.', 'dom_distillate')),
     'NO_CHANGE': (('', None), ('The new text equals the current text; nothing to update.', None)),
     'UPDATE_INCOMPLETE': (('', None), ('The new version was admitted but the old one is not yet marked as replaced. Repeat the same dom_update call to finish; it will not create a duplicate.', 'dom_update')),
     'INVALID_ARGUMENTS': (('Arguments are matched exactly: no unknown keys, no wrong types.', 'dom_describe'), ('Arguments are matched exactly: no unknown keys, no wrong types. profile, review_level, principal and work are fixed at server launch and cannot be passed.', 'dom_describe')),

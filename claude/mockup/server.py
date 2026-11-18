@@ -201,6 +201,7 @@ LITE_SIGNATURE = {
     'dom_extract_submit': ({'task': str, 'text': str, 'candidates': list}, {'model': str, 'link_role': str}),
     'dom_annotate': ({'claim_id': str, 'kind': str}, {'text': str, 'url': str, 'locator': str, 'name': str, 'value': str,
                                                       'conflict_ref': str, 'reason': str}),
+    'dom_distillate': ({'action': str}, {'source': str, 'distillate': str, 'text': str, 'anchors': list, 'by': str, 'note': str}),
 }
 # dom_start/dom_find accept requests with a missing 'request' so that the refusal can carry a hint
 # (a transport-level INVALID_ARGUMENTS cannot); everything else is matched exactly.
@@ -329,6 +330,11 @@ def _handle_accept(service, args):
     return service.accept(args['candidate_id'], args.get('decision', 'approve'), args.get('note'))
 
 
+def _handle_distillate(service, args):
+    return service.distillate(args['action'], args.get('source'), args.get('distillate'), args.get('text'),
+                              args.get('anchors'), args.get('by'), args.get('note'))
+
+
 def _handle_reconcile(service, args):
     return service.reconcile()
 
@@ -415,6 +421,7 @@ HANDLERS = {
     'dom_extract': _handle_extract,
     'dom_accept': _handle_accept,
     'dom_annotate': _handle_annotate,
+    'dom_distillate': _handle_distillate,
     'dom_extract_submit': _handle_extract_submit,
     'dom_init': _handle_init,
     'dom_resume': _handle_resume,

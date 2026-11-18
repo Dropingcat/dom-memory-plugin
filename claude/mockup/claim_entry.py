@@ -1613,6 +1613,20 @@ TOOL_DOCS.update({
         'returns': 'status DEMO_ADMITTED, tx_id, branch, revision, claim_ids.',
         'example': {'candidate_id': '<candidate_id>', 'review_id': '<review_id>', 'idempotency_key': 'admit-1', 'intent_digest': '<digest>'},
     },
+    'dom_distillate': {
+        'summary': 'Statement distillate chain (stage 3): read the source quote, the version chain, the computed states and the effective version (show), or improve the deterministic extractive v1 only through propose -> validate (V1-V8) -> accept. The source is ground truth and immutable; a user correction is a new source. Every gate is computed from the ledger; show reports next_steps.',
+        'arguments': {
+            'action': _arg('string', True, 'show | propose | validate | accept | withdraw | dispute | resolve.'),
+            'source': _arg('string', False, 'The statement quote id (capture source).'),
+            'distillate': _arg('string', False, 'Any version id of the logical distillate (alternative to source).'),
+            'text': _arg('string', False, 'propose: the candidate text (1-3 sentences, grounded in the anchors).'),
+            'anchors': _arg('array', False, 'propose: one inner array per candidate sentence, each a list of verbatim quotes from the source.'),
+            'by': _arg('string', False, 'accept: agent (default) or user. Recorded, not authenticated.'),
+            'note': _arg('string', False, 'accept/withdraw/dispute/resolve: the reason (required for withdraw, dispute, resolve).'),
+        },
+        'returns': 'status DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED; source_id, source_state, distillate_id, logical_claim_id, effective{claim_id,version,origin}, versions[{claim_id,version,state,origin,text,...}], open_conflicts, failed, review, next_steps. Refusals: NO_STATEMENT, SPAN_NOT_FOUND, SPAN_AMBIGUOUS, NO_IMPROVEMENT, PROPOSAL_CONFLICT, REVIEW_REQUIRED, REVIEW_STALE, DISTILLATE_DISPUTED, DISTILLATE_LOOP.',
+        'example': {'action': 'show', 'source': '<source_id>'},
+    },
 })
 
 TOOL_DOCS['dom_claim']['summary'] += (' Required per type (refused with MISSING_FIELD otherwise; empty strings count as missing): '

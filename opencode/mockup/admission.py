@@ -1232,3 +1232,7 @@ class Service:
         claim_entry_mod._lite_only(self); self.scope(); self.ready()
         merged=planning.reconcile_variants(self)
         return {'status':'RECONCILED','simulated':True,'merged':merged}
+    @guarded
+    def distillate(self,action,source=None,distillate=None,text=None,anchors=None,by=None,note=None):
+        from . import distillate as distillate_mod
+        return distillate_mod.distillate(self,action,source,distillate,text,anchors,by,note)
