@@ -224,16 +224,16 @@ Implementation rules (pinned):
 - Modify: `NOT_DONE.md`, `opencode/skills/dom-memory/SKILL.md` (+ `claude/skills/dom-memory/SKILL.md` byte-identical), `docs/claim-brief.md` §16 mapping check (П4.6/П4.7 rows already present)
 - Rebuild: `dist/` via `python tools/build_zip.py`
 
-- [ ] **Step 1: NOT_DONE.md** — add under stage-3 limits: capture is stem-based (false negatives until "запомни"); `by=user` is declared not authenticated; the chain stops after three failed reviews per statement; v2 refinement skill (П4.7) is planned, not implemented.
+- [x] **Step 1: NOT_DONE.md** — add under stage-3 limits: capture is stem-based (false negatives until "запомни"); `by=user` is declared not authenticated; the chain stops after three failed reviews per statement; v2 refinement skill (П4.7) is planned, not implemented.
 
-- [ ] **Step 2: SKILL.md** — short section: capture happens in the hook; improve a distillate only through `dom_distillate(action="propose", source=..., text=..., anchors=[[...]])` → `validate` → `accept`; states/effective come from `show`; source is ground truth; a user correction is a new source.
+- [x] **Step 2: SKILL.md** — short section: capture happens in the hook; improve a distillate only through `dom_distillate(action="propose", source=..., text=..., anchors=[[...]])` → `validate` → `accept`; states/effective come from `show`; source is ground truth; a user correction is a new source.
 
-- [ ] **Step 3: Copy SKILL.md byte-identical to `claude/`, verify sha256.**
+- [x] **Step 3: Copy SKILL.md byte-identical to `claude/`, verify sha256.**
 
-- [ ] **Step 4: Full verification** — `python tests/check_distillate_extract.py && python tests/check_statement_capture.py && python tests/check_distillate_pipeline.py && python tests/check_inbox_status.py && python tests/check_plan_identity.py && python tools/build_zip.py`
+- [x] **Step 4: Full verification** — `python tests/check_distillate_extract.py && python tests/check_statement_capture.py && python tests/check_distillate_pipeline.py && python tests/check_inbox_status.py && python tests/check_plan_identity.py && python tools/build_zip.py`
   Expected: all PASS; build_zip prints both archive paths.
 
-- [ ] **Step 5: Commit** — `git commit -m "docs: stage-3 limits and dom_distillate workflow; rebuild dist"`
+- [x] **Step 5: Commit** — `git commit -m "docs: stage-3 limits and dom_distillate workflow; rebuild dist"`
 
 ## Self-review notes
 

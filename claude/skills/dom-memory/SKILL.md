@@ -64,6 +64,14 @@ When your session restarts or another agent touches the same plan, start from `d
 - A claim id you remember may have moved on (updated by another agent, or your variant merged into the base by `dom_reconcile`). `dom_context` / `dom_claim_versions` return `resolution` {status: current|replaced|merged|archived, current_claim_id, steps[who, when, why], explanation}; `dom_update` on an old id answers `NOT_CURRENT` with the current `claim_id` and the same `resolution`. Continue from `current_claim_id`.
 - "Who did what on this item": `dom_task_graph({"task": "П1"})` — chains of versions with authors and their links (`basis`, `refines`, `supersedes`, `variant_of`); `"agent": "<principal>"` filters one agent. `dom_task_claims` also shows `author`.
 
+## User statements and their distillates
+
+- A user statement in a prompt is captured by the hook as two claims: the source `quote` (verbatim, immutable) and a deterministic extractive `text` distillate v1 with anchors (character spans into the source). You do not create them by hand; `dom_distillate({"action": "show", "source": "<source_id>"})` reads the chain.
+- The source is ground truth. Improve the distillate **only** through the hard chain: `dom_distillate({"action": "propose", "source": "<source_id>", "text": "<1-3 sentences>", "anchors": [["<verbatim quote from the source>", ...]]})` → `dom_distillate({"action": "validate", "source": "<source_id>"})` (V1-V8 gates) → `dom_distillate({"action": "accept", "source": "<source_id>", "by": "agent"})`. One inner anchors array per candidate sentence; every quote must occur exactly once in the source.
+- `propose` never displaces the effective version. `show` computes every state and the effective version from the ledger (`effective`); after `accept` it flips. A failed review leaves the old version effective; three failed reviews stop the chain (`DISTILLATE_LOOP`) — ask the user for a new instruction.
+- A user correction is a **new source**, not an edit: record the corrected wording as a new statement (or a `quote` claim), then propose a new distillate there. `dispute` opens a conflict on the source (all versions unusable) or on one version; `resolve` closes it after the correction is accepted.
+- `by` is recorded, not authenticated (lite is single-owner). `withdraw` retires the current version; the effective version falls back to the previous accepted one (or v1).
+
 ## Splitting a long text into claims
 
 1. `dom_extract({"task": "П1.1", "text": "<material>", "provider": "client"})` → rules + schema.

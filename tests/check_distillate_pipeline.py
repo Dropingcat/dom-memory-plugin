@@ -14,7 +14,18 @@ against BOTH host trees (claude/ and opencode/):
 4. a proposal equal to the effective text is NO_IMPROVEMENT;
 5. the same text with different anchors is PROPOSAL_CONFLICT;
 6. a lost ``basis_spans`` property is repaired by the retry, without a
-   duplicate version.
+   duplicate version;
+7. ``validate`` passes and replays; ``accept`` flips the effective version and
+   replays without a duplicate record;
+8. a new proposal keeps the accepted version effective; acceptance without a
+   review is REVIEW_REQUIRED and acceptance after the anchors changed is
+   REVIEW_STALE;
+9. ``withdraw`` retires the current version and the effective version falls
+   back;
+10. a failing V5 check (an invented number) is REVIEW_FAILED with the detail,
+    and three failed reviews stop the chain with DISTILLATE_LOOP;
+11. a dispute on the source makes the effective version None; ``resolve``
+    closes it and the fallback returns.
 """
 import os
 import subprocess
@@ -235,7 +246,9 @@ def check(tree):
             print('FAIL[%s]: %s' % (tree, (run.stdout + run.stderr)[-600:]))
             return False
         print('  %s/: PASS — propose is a new version, the v1 stays effective, retries replay, '
-              'anchors and conflicts are refused, a lost anchors property is repaired' % tree)
+              'anchors and conflicts are refused, a lost anchors property is repaired, '
+              'validate/accept flip the effective version, withdraw falls back, three failures stop the chain, '
+              'dispute and resolve work' % tree)
         return True
     finally:
         for path in sorted(scratch.rglob('*'), reverse=True):

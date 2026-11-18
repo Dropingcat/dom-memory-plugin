@@ -50,6 +50,29 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **No multi-project admin.** `OPENCODE_PROJECT_DIR` selects one project; switching
   projects means restarting the server with another directory.
 
+## Statement distillate (stage 3)
+
+* **Capture is stem-based, not semantic.** The hook captures a prompt only when
+  a versioned marker pack (`capture_pack`) scores a sentence; a paraphrase with
+  no marker and no project noun is a false negative until the user says
+  "запомни"/"запиши" (an explicit request always captures). The pack is
+  deliberately small; growing it is a versioned change, and the recorded digest
+  says which pack captured a statement.
+* **`by=user` is declared, not authenticated.** `accept(by='user')` is recorded
+  in the ledger; the lite profile is single-owner, so the server cannot prove
+  who called. A forged `by` is an audit finding, not a security boundary.
+* **The chain stops after three failed reviews per logical statement.** V8
+  refuses `propose`/`validate` with `DISTILLATE_LOOP`; there is no reset action
+  in this slice — ask the user for a new instruction (a correction is a new
+  source).
+* **The v2 refinement skill is planned, not implemented (П4.7).** The chain
+  (`propose` → `validate` V1-V8 → `accept`) exists and is tested; an agent-side
+  skill that reliably produces a good compression with anchors is a separate
+  slice.
+* **No statement rollup in the brief.** The `statements` rollup (П4.2) is
+  deliberately out of this slice; statements are read one chain at a time with
+  `dom_distillate(action='show')`.
+
 ## Release / packaging
 
 * **Not published to npm / PyPI.** The trees carry `package.json` and
@@ -66,11 +89,15 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **The pytest suite is not green on a system Python.** A large part of the engine
   does not import on the interpreter without the `mcp` package (`import mcp.types`);
   the maintainer's workflow runs tests through a dedicated venv.
-* **Four automated self-checks exist** (`tests/smoke_cold_start.py`,
-  `tests/check_plan_context.py`, `tests/check_inbox_status.py`,
-  `tests/check_plan_identity.py`, all host-free). They cover the critical
-  cold-start path, the plan context, the plan queue and plan identity; there is
-  no test for reviews, encryption, or the anthropic provider.
+* **The automated self-checks are host-free but not exhaustive**
+  (`tests/smoke_cold_start.py`, `tests/check_plan_context.py`,
+  `tests/check_inbox_status.py`, `tests/check_plan_identity.py`,
+  `tests/check_statement_capture.py`, `tests/check_distillate_extract.py`,
+  `tests/check_distillate_pipeline.py`). They cover the critical cold-start
+  path, the plan context, the plan queue, plan identity, hook statement capture,
+  the marker/splitter primitives and the whole distillate chain in both host
+  trees. There is no test for the review policies, encryption, or the anthropic
+  provider.
 * **No CI.** No GitHub Actions / pre-commit pipeline is configured yet.
 
 ## Known rough edges
