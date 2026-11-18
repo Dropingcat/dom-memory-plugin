@@ -196,6 +196,20 @@ def projection_stale(state,newest_task_revision,ttl_seconds):
     except (TypeError,ValueError): return True
     return (datetime.now(timezone.utc)-checked).total_seconds()>ttl_seconds
 
+def _resolve_locals(ids,p):
+    """Intra-package anatomy references (statement capture §12.11): an item's
+    ``anatomy.basis`` naming a sibling package-local id ('c1') resolves to that
+    sibling's real claim id before the claims are recorded.  Applies only to
+    names inside this package; anything else is left as the caller wrote it.
+    The reviewed candidate keeps the local names (the package bytes are
+    already digested); the recorded facts carry the resolved ones."""
+    for i in p['items']:
+        a=i.get('anatomy')
+        if not isinstance(a,dict): continue
+        basis=a.get('basis')
+        if isinstance(basis,list):
+            a['basis']=[ids.get(x,x) if isinstance(x,str) else x for x in basis]
+
 class Service:
     plan_ttl_seconds=24*3600
     def __init__(self,directory,role='author',simulation=True,branches=('AA','AB'),profile='strict',review_mode='auto',principal=None,root=None):
@@ -500,6 +514,7 @@ class Service:
             self.check_references(c,p)
             tx=str(uuid.uuid4()); revision=p['expected_branch_revision']+1
             ids={i['local_id']:str(uuid.uuid4()) for i in p['items']}
+            _resolve_locals(ids,p)
             receipt=dict(status='DEMO_ADMITTED',simulated=True,tx_id=tx,branch=p['branch'],revision=revision,intent_digest=intent_digest,claim_ids=ids if p['operation']=='claims' else {},event_ids=ids if p['operation']=='append' else {})
             c.execute('INSERT INTO transactions VALUES(?,?,?,?)',(tx,p['branch'],revision,canonical(receipt)))
             for i in p['items']:

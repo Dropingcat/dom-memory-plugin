@@ -41,18 +41,18 @@
 - Consumes: approved spec (user, 2026-11-17).
 - Produces: the wording Tasks 3 and 5 implement (two-transaction capture; stored-span V3).
 
-- [ ] **Step 1: Amend §12.4 capture atomicity** — replace "The hook writes the source, the v1 and its `basis_spans` in one transaction: if the transaction fails, nothing is written and the prompt is not blocked." with: "The hook writes the source and the v1 as one two-item claims package; both properties (`capture_pack` on the source, `basis_spans` on the v1) go into one following append transaction. If a transaction fails, the prompt is not blocked; a repeat of the same statement repairs a missing property (§12.9)."
+- [x] **Step 1: Amend §12.4 capture atomicity** — replace "The hook writes the source, the v1 and its `basis_spans` in one transaction: if the transaction fails, nothing is written and the prompt is not blocked." with: "The hook writes the source and the v1 as one two-item claims package; both properties (`capture_pack` on the source, `basis_spans` on the v1) go into one following append transaction. If a transaction fails, the prompt is not blocked; a repeat of the same statement repairs a missing property (§12.9)."
 
-- [ ] **Step 2: Amend §12.11** the same way ("in one transaction" → the two-transaction wording).
+- [x] **Step 2: Amend §12.11** the same way ("in one transaction" → the two-transaction wording).
 
-- [ ] **Step 3: Amend §12.6 V3** — replace "each anchor is a non-empty verbatim substring of the source occurring exactly once; offsets resolve" with: "each anchor is a non-empty verbatim substring of the source; a quote that occurs more than once is refused with `SPAN_AMBIGUOUS` at `propose` time; stored offsets must satisfy `source[start:end] == quote` (a repeated sentence gets distinct offsets, so stored spans never need the once-rule)".
+- [x] **Step 3: Amend §12.6 V3** — replace "each anchor is a non-empty verbatim substring of the source occurring exactly once; offsets resolve" with: "each anchor is a non-empty verbatim substring of the source; a quote that occurs more than once is refused with `SPAN_AMBIGUOUS` at `propose` time; stored offsets must satisfy `source[start:end] == quote` (a repeated sentence gets distinct offsets, so stored spans never need the once-rule)".
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `grep -n "two-item claims package" docs/claim-brief.md && grep -n "SPAN_AMBIGUOUS\` at \`propose" docs/claim-brief.md`
 Expected: both found.
 
-- [ ] **Step 5: Commit** — `git add docs/claim-brief.md && git commit -m "docs: capture uses two transactions; V3 validates stored spans by offset"`
+- [x] **Step 5: Commit** — `git add docs/claim-brief.md docs/superpowers/plans/2026-11-17-distillate-pipeline.md && git commit -m "docs: capture uses two transactions; V3 validates stored spans by offset"`
 
 ### Task 2: Extraction primitives (pure functions)
 
@@ -71,7 +71,7 @@ Expected: both found.
   - `pack_digest() -> str` — `sha256` of the canonical marker pack;
   - `MARKER_RE (compiled)`, internal `_marker_hits(sentence) -> set[str]`.
 
-- [ ] **Step 1: Write the failing test** `tests/check_distillate_extract.py` — for each tree in `('claude', 'opencode')` run `python -B -c` with `sys.path.insert(0, <tree>)` and assert:
+- [x] **Step 1: Write the failing test** `tests/check_distillate_extract.py` — for each tree in `('claude', 'opencode')` run `python -B -c` with `sys.path.insert(0, <tree>)` and assert:
   - `split_spans("Сделай 3.14 и т.д. Потом решаем.")[0]` is one sentence `"Сделай 3.14 и т.д."` (decimal + abbreviation do not split);
   - `split_spans` of text with a fenced block keeps the block inside one unit;
   - `capture_decision("Важно запомнить: делаем детерминированный дистиллят.", [])["capture"]` is True, `["explicit"]` True ("запомни");
@@ -82,14 +82,14 @@ Expected: both found.
   - `pack_digest()` is stable across two calls and across both trees.
   Script prints `{"ok": true}` and exits non-zero on the first failed assert.
 
-- [ ] **Step 2: Run it** — `python tests/check_distillate_extract.py`
+- [x] **Step 2: Run it** — `python tests/check_distillate_extract.py`
   Expected: FAIL (`ModuleNotFoundError: mockup.distillate`).
 
-- [ ] **Step 3: Implement** `opencode/mockup/distillate.py` — module docstring names the spec (§12.3, §12.14); splitter: normalize CRLF for matching but keep raw offsets; do not split after a single-letter abbreviation (`r'(^|\s)\S\.$'` lookbehind guard), after a digit decimal point, inside a fenced code block or a URL; list markers and Markdown headings are separators; scoring per §12.3 (marker = 2 needs support: a project noun or a second distinct marker; explicit strong request captures alone; noise-only = −3).
+- [x] **Step 3: Implement** `opencode/mockup/distillate.py` — module docstring names the spec (§12.3, §12.14); splitter: normalize CRLF for matching but keep raw offsets; do not split after a single-letter abbreviation (`r'(^|\s)\S\.$'` lookbehind guard), after a digit decimal point, inside a fenced code block or a URL; list markers and Markdown headings are separators; scoring per §12.3 (marker = 2 needs support: a project noun or a second distinct marker; explicit strong request captures alone; noise-only = −3).
 
-- [ ] **Step 4: Copy byte-identical to `claude/` and verify** — `python -c "import hashlib,pathlib; a=pathlib.Path('opencode/mockup/distillate.py').read_bytes(); b=pathlib.Path('claude/mockup/distillate.py').read_bytes(); assert a==b"`; then run `python tests/check_distillate_extract.py` → PASS.
+- [x] **Step 4: Copy byte-identical to `claude/` and verify** — `python -c "import hashlib,pathlib; a=pathlib.Path('opencode/mockup/distillate.py').read_bytes(); b=pathlib.Path('claude/mockup/distillate.py').read_bytes(); assert a==b"`; then run `python tests/check_distillate_extract.py` → PASS.
 
-- [ ] **Step 5: Commit** — `git add opencode/mockup/distillate.py claude/mockup/distillate.py tests/check_distillate_extract.py && git commit -m "feat: deterministic capture scoring and hardened sentence splitter (П4.1)"`
+- [x] **Step 5: Commit** — `git add opencode/mockup/distillate.py claude/mockup/distillate.py tests/check_distillate_extract.py && git commit -m "feat: deterministic capture scoring and hardened sentence splitter (П4.1)"`
 
 ### Task 3: `capture` + hook wiring
 
@@ -115,7 +115,7 @@ Implementation rules (pinned):
 - stdout line exactly per spec §12.11 (only when a new source is admitted; when no sentence qualifies the line names the source and "no distillate");
 - hook: in `main()` after `svc` is built and before `svc.plan_status(...)`, call `distillate.capture(svc, prompt, session)` in try/except; print `res['line']` when not None; failures to stderr, exit 0.
 
-- [ ] **Step 1: Write the failing test** `tests/check_statement_capture.py` — per tree, temp project dir + env (`OPENCODE_PROJECT_DIR`, `PYTHONUTF8=1`), run `plan_check_hook.py` with a JSON stdin `{"prompt": ..., "session_id": "s1"}`:
+- [x] **Step 1: Write the failing test** `tests/check_statement_capture.py` — per tree, temp project dir + env (`OPENCODE_PROJECT_DIR`, `PYTHONUTF8=1`), run `plan_check_hook.py` with a JSON stdin `{"prompt": ..., "session_id": "s1"}`:
   1. first run autostarts (existing behavior, root line on stdout) and does NOT capture the root prompt again (no `statement ` line);
   2. second prompt `"Делаем детерминированный экстрактивный дистиллят. Это базовый процесс."` → stdout contains one `statement ` line; a verification script asserts: a `quote` claim on main whose raw text is byte-identical to the prompt, `source_ref`/`locator` shape, `capture_pack` property; a `text` claim with `basis=[source_id]`, `origin_version='stmt-extract-v1'`, `basis_spans` property whose spans satisfy `source[start:end] == quote`;
   3. a question prompt `"Как дела?"` → no new quote claims (count before == after);
@@ -125,13 +125,13 @@ Implementation rules (pinned):
   7. hook with an empty prompt → exit 0, no output change;
   8. stderr-only failure drill: env `DOM_AUTOSTART=0`, missing dir → exit 0.
 
-- [ ] **Step 2: Run it** — `python tests/check_statement_capture.py` → FAIL (`capture` missing / no statement line).
+- [x] **Step 2: Run it** — `python tests/check_statement_capture.py` → FAIL (`capture` missing / no statement line).
 
-- [ ] **Step 3: Implement** capture + hook wiring as pinned above.
+- [x] **Step 3: Implement** capture + hook wiring as pinned above.
 
-- [ ] **Step 4: Copy byte-identical to `claude/` (both files), verify sha256, run** `python tests/check_statement_capture.py` → PASS; also `python tests/check_inbox_status.py` → PASS (no hook regression).
+- [x] **Step 4: Copy byte-identical to `claude/` (both files), verify sha256, run** `python tests/check_statement_capture.py` → PASS; also `python tests/check_inbox_status.py` → PASS (no hook regression).
 
-- [ ] **Step 5: Commit** — `git add ... && git commit -m "feat: hook captures statements as source quote + extractive v1 with anchors (П4.1, П4.4)"`
+- [x] **Step 5: Commit** — `git add ... && git commit -m "feat: hook captures statements as source quote + extractive v1 with anchors (П4.1, П4.4)"`
 
 ### Task 4: `show` + server wiring
 

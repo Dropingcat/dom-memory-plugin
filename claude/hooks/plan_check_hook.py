@@ -68,6 +68,14 @@ def main(argv=None):
         from mockup import planning
         from mockup.admission import Service
         svc = Service(directory, profile='lite', role=role, principal=principal)  # T-02
+        if prompt.strip():
+            try:  # П4.1/П4.4: statement capture; a failure never blocks the prompt
+                from mockup import distillate
+                res = distillate.capture(svc, prompt, session)
+                if res.get('line'):
+                    print(res['line'])
+            except Exception as e:
+                print('plan_check_hook: capture %s' % type(e).__name__, file=sys.stderr)
         check_every = int(os.environ.get('DOM_CHECK_EVERY') or 10)
         status = svc.plan_status(check_every)  # drains the inbox first
         if status.get('status') == 'CHAIN_BROKEN':  # QA004 F-26: say it, every prompt, until fixed
