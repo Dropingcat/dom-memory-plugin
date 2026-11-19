@@ -99,6 +99,21 @@ assert d.capture_decision("Косил косой косой косой.", [])["c
 # 15. a homonym false hit is gated by the support rule ("решение" vs "решето")
 assert d.capture_decision("Решили мыло через решето.", [])["capture"] is False
 
+# 16. CRLF line endings do not corrupt the split or the raw offsets
+src = "Решили фиксировать baseline." + chr(13) + chr(10) + "Делаем детерминированный дистиллят."
+spans = d.split_spans(src)
+assert [t for (t, _s, _e) in spans] == ["Решили фиксировать baseline.",
+                                    "Делаем детерминированный дистиллят."], spans
+assert src[spans[0][1]:spans[0][2]] == spans[0][0]
+assert src[spans[1][1]:spans[1][2]] == spans[1][0]
+
+# 17. the selected sentences are emitted in source order, not in score order
+src = "Решили фиксировать baseline. Нельзя ломать источник, это наше правило. Делаем детерминированный дистиллят."
+r = d.capture_decision(src, ["baseline", "дистиллят"])
+assert [t for (t, _s, _e) in r["selected"]] == [
+    "Решили фиксировать baseline.", "Нельзя ломать источник, это наше правило.",
+    "Делаем детерминированный дистиллят."], r
+
 print("digest:" + d.pack_digest())
 print("ok: extract " + sys.argv[2])
 """

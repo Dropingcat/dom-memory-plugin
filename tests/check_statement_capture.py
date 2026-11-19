@@ -22,7 +22,7 @@ opencode/) and verifies the ledger directly in SQLite:
 9. `dom_distillate(action="show", source=...)` reads the captured chain back
    through the real server wiring (dispatch + public projection): v1 is
    ``extracted`` and effective, two reads are identical, an unknown source is
-   a structured NO_STATEMENT refusal with a hint, and `show` without a target
+   a structured STATEMENT_NOT_FOUND refusal with a hint, and `show` without a target
    is INVALID_FIELD.
 
     python tests/check_statement_capture.py
@@ -276,8 +276,8 @@ def check(tree, distillate):
         # 11. an unknown source is a structured refusal with a hint, never a crash
         r11 = call_tool(tree, project, env, action='show', source='no-such-id')
         out11 = json.loads(r11.stdout) if r11.stdout.strip() else {}
-        if out11.get('status') != 'NO_STATEMENT' or not out11.get('hint'):
-            print('FAIL[%s]: unknown source must refuse NO_STATEMENT with a hint: %r' % (tree, out11))
+        if out11.get('status') != 'STATEMENT_NOT_FOUND' or not out11.get('hint'):
+            print('FAIL[%s]: unknown source must refuse STATEMENT_NOT_FOUND with a hint: %r' % (tree, out11))
             return False
 
         # 12. show needs a target

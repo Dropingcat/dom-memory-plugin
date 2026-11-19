@@ -464,7 +464,7 @@ _HELP = {
     'NO_SUCH_CANDIDATE': (('', None), ('No candidate with this id in this project. Pending candidates are listed by dom_resume.', 'dom_resume')),
     'NO_SUCH_CLAIM': (('', None), ('No claim with this id in this project. Find the id with dom_find.', 'dom_find')),
     'NOT_CURRENT': (('', None), ('This claim version was already replaced. Update the current version (claim_id in this answer, or find it with dom_find).', 'dom_find')),
-    'NO_STATEMENT': (
+    'STATEMENT_NOT_FOUND': (
         ('The id is not a captured statement source or a distillate version of one. Take the ids from the capture line or the statement ledger.', 'dom_distillate'),
         ('No captured statement with this id. Take source/distillate from the [DOM project memory] statement line, or call dom_distillate(action="show", source=<id>).', 'dom_distillate')),
     'PROPOSAL_INVALID': (
@@ -497,9 +497,6 @@ _HELP = {
     'DISTILLATE_LOOP': (
         ('Three failed reviews for this logical claim; the chain is stopped. Ask the user for a new instruction (a new source starts a new chain).', 'dom_distillate'),
         ('Three failed reviews: the chain is stopped, there is no reset. Ask the user; a new instruction becomes a new source.', 'dom_distillate')),
-    'VARIANT_CONFLICT': (
-        ('Another accepted variant of the same source exists; converge on one text.', 'dom_distillate'),
-        ('Another accepted variant of this source exists; keep one text.', 'dom_distillate')),
     'NO_CHANGE': (('', None), ('The new text equals the current text; nothing to update.', None)),
     'UPDATE_INCOMPLETE': (('', None), ('The new version was admitted but the old one is not yet marked as replaced. Repeat the same dom_update call to finish; it will not create a duplicate.', 'dom_update')),
     'INVALID_ARGUMENTS': (('Arguments are matched exactly: no unknown keys, no wrong types.', 'dom_describe'), ('Arguments are matched exactly: no unknown keys, no wrong types. profile, review_level, principal and work are fixed at server launch and cannot be passed.', 'dom_describe')),

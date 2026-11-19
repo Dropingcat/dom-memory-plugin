@@ -239,8 +239,11 @@ def capture_decision(source_text, project_nouns):
         score, explicit = _score(text, project_nouns)
         if score >= 2 and len(text) <= MAX_SENTENCE:
             scored.append((score, start, text, end, explicit))
-    selected = [(t, s, e) for (sc, s, t, e, _)
-                in sorted(scored, key=lambda x: (-x[0], x[1]))[:3]]
+    best = sorted(scored, key=lambda x: (-x[0], x[1]))[:3]
+    # the distillate joins the selected sentences in source order (a reorder
+    # could turn "A, потому что B" into "B. A")
+    selected = [(t, s, e) for (_sc, s, t, e, _)
+                in sorted(best, key=lambda x: x[1])]
     return {'capture': bool(selected),
             'explicit': any(x[4] for x in scored),
             'selected': selected,
@@ -384,6 +387,10 @@ def capture(svc, prompt, session=None):
         return _result('SKIPPED')      # the root request is already the verbatim record
     picked = capture_decision(prompt, nouns)
     if not picked['capture']:
+        # §12.3/§12.4: no sentence qualified, so there is nothing to distill
+        # and no source to write.  The capture-side status is NO_STATEMENT; it
+        # is not a tool refusal (the public refusal for an unknown id is
+        # STATEMENT_NOT_FOUND).
         return _result('NO_STATEMENT')
     from . import claim_entry as ce
     sid = _session_id(session)
@@ -575,6 +582,16 @@ def _explicit_archived(c):
         "SELECT DISTINCT claim_ref FROM events WHERE kind='archive' AND claim_ref IS NOT NULL")}
 
 
+def _refuse_archived(c, source_row):
+    """A retired source stays readable but takes no new versions or reviews:
+    otherwise a proposal would be born ``superseded`` and the chain could
+    never become effective.  Dispute/resolve stay allowed as cleanup."""
+    if source_row['id'] in _explicit_archived(c):
+        raise _denied()('STATEMENT_NOT_FOUND', field='source',
+                        hint='This source is archived (superseded): it stays readable with action="show" '
+                             'but takes no new versions. Capture the new instruction as a new statement.')
+
+
 def _state(c, version, is_v1, source_text, source_replaced=False):
     """§12.5 precedence: superseded > withdrawn > disputed > accepted >
     validated > rejected > extracted > proposed."""
@@ -632,19 +649,19 @@ def _root_for_source(c, source_id):
 def _statement_source_row(c, claim_id, field):
     row = c.execute('SELECT id, content_type, raw, payload FROM claims WHERE id=?', (claim_id,)).fetchone()
     if row is None or row['content_type'] != 'quote':
-        raise _denied()('NO_STATEMENT', field=field)
+        raise _denied()('STATEMENT_NOT_FOUND', field=field)
     try:
         payload = json.loads(row['payload'])
     except (ValueError, TypeError):
         payload = None
     if not is_statement_source(payload):
-        raise _denied()('NO_STATEMENT', field=field)
+        raise _denied()('STATEMENT_NOT_FOUND', field=field)
     return row
 
 
 def _resolve_target(c, source, distillate):
-    """(source_row, root_id) for show and every write action; NO_STATEMENT
-    when the id is not a captured statement."""
+    """(source_row, root_id) for show and every write action;
+    STATEMENT_NOT_FOUND when the id is not a captured statement."""
     Denied = _denied()
     if source is None and distillate is None:
         raise Denied('INVALID_FIELD', field='source',
@@ -655,25 +672,25 @@ def _resolve_target(c, source, distillate):
             raise Denied('INVALID_FIELD', field='distillate')
         row = c.execute('SELECT id, content_type FROM claims WHERE id=?', (distillate,)).fetchone()
         if row is None or row['content_type'] != 'text':
-            raise Denied('NO_STATEMENT', field='distillate')
+            raise Denied('STATEMENT_NOT_FOUND', field='distillate')
         root_id = _chain(c, distillate)[0]['id']
         root_payload = json.loads(c.execute('SELECT payload FROM claims WHERE id=?', (root_id,)).fetchone()['payload'])
         basis = (root_payload.get('anatomy') or {}).get('basis') or []
         if len(basis) != 1:
-            raise Denied('NO_STATEMENT', field='distillate')
+            raise Denied('STATEMENT_NOT_FOUND', field='distillate')
         source_id = basis[0]
     if source is not None:
         if type(source) is not str or not source.strip():
             raise Denied('INVALID_FIELD', field='source')
         if source_id is not None and source_id != source:
-            raise Denied('NO_STATEMENT', field='source',
+            raise Denied('STATEMENT_NOT_FOUND', field='source',
                          hint='source and distillate belong to different statements.')
         source_id = source
     source_row = _statement_source_row(c, source_id, 'source')
     if root_id is None:
         root_id = _root_for_source(c, source_id)
         if root_id is None:
-            raise Denied('NO_STATEMENT', field='source')
+            raise Denied('STATEMENT_NOT_FOUND', field='source')
     return source_row, root_id
 
 
@@ -898,6 +915,75 @@ def _count_markers(text, words):
     return {w: len(_BOUNDED[w].findall(folded)) for w in words}
 
 
+def _numeral_forms():
+    """Surface forms of Russian cardinal numerals, for V5 word-number checks.
+
+    A word is a number only if it is in this pack: ``и`` and every other
+    ordinary word stay out of the fact check.  Surface forms are compared,
+    not values, so ``10`` and ``десять`` are different tokens (§12.6 V5,
+    §12.14 word-numbers).  The pack is deliberately small and explicit; a new
+    inflection is a pack change with a test, not a regex guess.
+    """
+    forms = set()
+
+    def add(*words):
+        forms.update(words)
+
+    add('ноль', 'нуля', 'нулю', 'нулем', 'нуле')
+    add('один', 'одна', 'одно', 'одного', 'одной', 'одному', 'одним', 'одном', 'одну')
+    add('два', 'две', 'двух', 'двум', 'двумя')
+    add('три', 'трех', 'трем', 'тремя')
+    add('четыре', 'четырех', 'четырем', 'четырьмя')
+    for stem in ('пят', 'шест', 'сем', 'восем', 'девят'):
+        add(stem + 'ь', stem + 'и', stem + 'ью')
+    for stem in ('одиннадцат', 'двенадцат', 'тринадцат', 'четырнадцат', 'пятнадцат',
+                 'шестнадцат', 'семнадцат', 'восемнадцат', 'девятнадцат',
+                 'двадцат', 'тридцат'):
+        add(stem + 'ь', stem + 'и', stem + 'ью')
+    add('сорок', 'сорока')
+    add('десять', 'десяти', 'десятью')
+    add('пятьдесят', 'пятидесяти', 'пятьюдесятью')
+    add('шестьдесят', 'шестидесяти', 'шестьюдесятью')
+    add('семьдесят', 'семидесяти', 'семьюдесятью')
+    add('восемьдесят', 'восьмидесяти', 'восемьюдесятью')
+    add('девяносто', 'девяноста')
+    add('сто', 'ста', 'стам', 'стами', 'стах')
+    add('двести', 'двухсот', 'двумстам', 'двумястами', 'двухстах')
+    add('триста', 'трехсот', 'тремстам', 'тремястами', 'трехстах')
+    add('четыреста', 'четырехсот', 'четыремстам', 'четырьмястами', 'четырехстах')
+    add('пятьсот', 'пятисот', 'пятистам', 'пятьюстами', 'пятистах')
+    add('шестьсот', 'шестисот', 'шестистам', 'шестьюстами', 'шестистах')
+    add('семьсот', 'семисот', 'семистам', 'семьюстами', 'семистах')
+    add('восемьсот', 'восьмисот', 'восьмистам', 'восемьюстами', 'восьмистах')
+    add('девятьсот', 'девятисот', 'девятистам', 'девятьюстами', 'девятистах')
+    add('тысяча', 'тысячи', 'тысяче', 'тысячу', 'тысячей', 'тысяч',
+        'тысячам', 'тысячами', 'тысячах')
+    add('миллион', 'миллиона', 'миллиону', 'миллионом', 'миллионе',
+        'миллионы', 'миллионов', 'миллионам', 'миллионами', 'миллионах')
+    add('миллиард', 'миллиарда', 'миллиарду', 'миллиардом', 'миллиарде',
+        'миллиарды', 'миллиардов', 'миллиардам', 'миллиардами', 'миллиардах')
+    return frozenset(forms)
+
+
+_NUMERAL_WORDS = _numeral_forms()
+
+
+def _numeral_tokens(text):
+    """Number surfaces of a text: normalized digit tokens plus the numeral
+    words of the pack.  Ordinary words are ignored; the comparison is by
+    surface form, so a digit and a word for the same value are a V5 failure
+    (§12.6 V5 / §12.14 word-numbers)."""
+    text = text.translate(_STRESS_MARKS)
+    out = []
+    for m in _NUMBER.finditer(text):
+        out.append(m.group(0).replace(',', '.'))
+    for w in _WORD_CASED.findall(text):
+        low = w.lower().replace('ё', 'е')
+        if low in _NUMERAL_WORDS:
+            out.append(low)
+    return out
+
+
 def _check_v5(spans, sentences, source_text):
     stored = spans.get('sentences') if isinstance(spans, dict) else None
     if not isinstance(stored, list) or len(stored) != len(sentences):
@@ -905,9 +991,9 @@ def _check_v5(spans, sentences, source_text):
     source_fold = source_text.casefold().replace('ё', 'е')
     for i, sentence in enumerate(sentences):
         anchor = _anchor_text(stored[i])
-        for number in _NUMBER.findall(sentence):
-            if not re.search(r'(?<!\d)' + re.escape(number) + r'(?!\d)', anchor):
-                return {'sentence': i, 'numbers': [number]}
+        for token in _numeral_tokens(sentence):
+            if token not in _numeral_tokens(anchor):
+                return {'sentence': i, 'numbers': [token]}
         words = _WORD_CASED.findall(sentence)
         capitals = [w for w in words[1:] if w[:1].isupper()]
         absent = [w for w in capitals if w.casefold().replace('ё', 'е') not in source_fold]
@@ -1050,7 +1136,8 @@ def _propose(svc, source=None, distillate=None, text=None, anchors=None):
     with svc.store.read() as c:
         source_row, root_id = _resolve_target(c, source, distillate)
         source_text = bytes(source_row['raw']).decode('utf8', 'replace')
-        source_replaced = source_row['id'] in _explicit_archived(c)
+        _refuse_archived(c, source_row)
+        source_replaced = False       # a retired source never reaches the writer
         versions = _versions(c, root_id)
         current = versions[-1]
         props = _properties(c, current['claim_id'])
@@ -1106,7 +1193,8 @@ def _validate(svc, source=None, distillate=None):
     with svc.store.read() as c:
         source_row, root_id = _resolve_target(c, source, distillate)
         source_text = bytes(source_row['raw']).decode('utf8', 'replace')
-        source_replaced = source_row['id'] in _explicit_archived(c)
+        _refuse_archived(c, source_row)
+        source_replaced = False       # a retired source never reaches the reviewer
         versions = _versions(c, root_id)
         current = versions[-1]
         _require_current(distillate, current)
@@ -1153,6 +1241,7 @@ def _accept(svc, source=None, distillate=None, by=None, note=None):
         raise Denied('INVALID_FIELD', field='by', hint="'by' is agent (default) or user.")
     with svc.store.read() as c:
         source_row, root_id = _resolve_target(c, source, distillate)
+        _refuse_archived(c, source_row)
         source_text = bytes(source_row['raw']).decode('utf8', 'replace')
         versions = _versions(c, root_id)
         current = versions[-1]
@@ -1199,6 +1288,7 @@ def _withdraw(svc, source=None, distillate=None, note=None):
         raise Denied('INVALID_FIELD', field='note', hint="'note' is required: say why the version is withdrawn.")
     with svc.store.read() as c:
         source_row, root_id = _resolve_target(c, source, distillate)
+        _refuse_archived(c, source_row)
         versions = _versions(c, root_id)
         current = versions[-1]
         _require_current(distillate, current)
@@ -1221,7 +1311,7 @@ def _target_claim(c, source_row, distillate, field):
         raise Denied('INVALID_FIELD', field=field)
     row = c.execute('SELECT id FROM claims WHERE id=?', (distillate,)).fetchone()
     if row is None:
-        raise Denied('NO_STATEMENT', field=field)
+        raise Denied('STATEMENT_NOT_FOUND', field=field)
     return distillate
 
 
