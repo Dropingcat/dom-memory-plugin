@@ -75,7 +75,7 @@ request is recorded verbatim as the root claim — no manual init.
 ├── GET_STARTED.md         detailed installation for both hosts
 ├── NOT_DONE.md            what is not implemented / not finalised (read this)
 ├── LICENSE                MIT
-├── VERSION                current plugin version (0.2.3)
+├── VERSION                current plugin version (0.2.4)
 ├── claude/                self-contained Claude Code plugin tree
 │   ├── .claude-plugin/plugin.json   plugin manifest
 │   ├── .mcp.json                    MCP server (stdio), ${DOM_PYTHON:-python}

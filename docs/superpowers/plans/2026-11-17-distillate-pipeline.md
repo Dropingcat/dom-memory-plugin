@@ -26,7 +26,7 @@
 2. **CRLF / trailing whitespace prompt:** the stored source is the prompt as received; a repeat with different whitespace is the same statement (normalized key) and must not create a second source. Pinned in Task 3 ("duplicate with different whitespace").
 3. **Decimal / abbreviation splitting:** "3.14" and "т." must not split a sentence. Pinned in Task 2 ("decimals and abbreviations stay one sentence").
 4. **Dropped negation / invented number in a proposal:** V5 must fail and the effective version must stay the previous one. Pinned in Task 6 ("V5 catches a dropped negation").
-5. **Unknown source id:** `dom_distillate(source="no-such-id")` returns a structured refusal (NO_STATEMENT), never a traceback. Pinned in Task 4 ("unknown source is a refusal").
+5. **Unknown source id:** `dom_distillate(source="no-such-id")` returns a structured refusal (STATEMENT_NOT_FOUND), never a traceback. Pinned in Task 4 ("unknown source is a refusal").
 6. **Three failed reviews:** after the third failure `propose`/`validate` refuse with DISTILLATE_LOOP and there is no reset. Pinned in Task 6 ("loop stops the chain").
 7. **Property write failure:** a `propose` version without `basis_spans` fails V3, and a retry with the same text repairs the property instead of duplicating the version. Pinned in Task 5 ("repair of a lost anchors property").
 
@@ -148,9 +148,9 @@ Implementation rules (pinned):
   - `_state(c, version_row, is_v1) -> str` per spec precedence `superseded > withdrawn > disputed > accepted > validated > rejected > extracted > proposed`;
   - `effective(c, source_id, versions) -> dict|None` per spec §12.5 pseudocode;
   - `distillate(svc, action, source=None, distillate=None, text=None, anchors=None, by=None, note=None) -> dict` — uniform record keys: `status, simulated, action, source_id, source_state, distillate_id, logical_claim_id, effective, versions, open_conflicts, failed, review, next_steps`;
-  - statuses `DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED`; refusal codes `NO_STATEMENT` (source/distillate not found or not a statement), plus the shared codes of later tasks.
+  - statuses `DISTILLATE_SHOWN | PROPOSED | ALREADY_RECORDED | VALIDATED | REVIEW_FAILED | ACCEPTED | WITHDRAWN | DISPUTED | RESOLVED`; refusal codes `STATEMENT_NOT_FOUND` (source/distillate not found or not a statement), plus the shared codes of later tasks.
 
-- [x] **Step 1: Write the failing test** (append to `tests/check_statement_capture.py`): after the capture scenario — `show` by source id returns `status='DISTILLATE_SHOWN'`, `versions[0]['state']=='extracted'`, `effective` points at the v1 with `origin='extract'`; two consecutive `show` runs produce identical JSON except `read_snapshot`; `show`/any action with `source='no-such-id'` → status `NO_STATEMENT` with a hint; `show` requires `source` or `distillate` (else `INVALID_FIELD`).
+- [x] **Step 1: Write the failing test** (append to `tests/check_statement_capture.py`): after the capture scenario — `show` by source id returns `status='DISTILLATE_SHOWN'`, `versions[0]['state']=='extracted'`, `effective` points at the v1 with `origin='extract'`; two consecutive `show` runs produce identical JSON except `read_snapshot`; `show`/any action with `source='no-such-id'` → status `STATEMENT_NOT_FOUND` with a hint; `show` requires `source` or `distillate` (else `INVALID_FIELD`).
 
 - [x] **Step 2: Run** → FAIL (`dom_distillate` unknown tool / record missing).
 
@@ -237,6 +237,21 @@ Implementation rules (pinned):
 
 ## Self-review notes
 
-- Spec coverage: §12.2–§12.9 → Tasks 2–6; §12.10 verification → show + `dom_context` (existing); §12.11 → Task 3; §12.3 capture filter → Tasks 2–3; §12.14 noise measures (marker pack versioning, support rule, splitter hardening) → Tasks 2–3. The brief-side `statements` rollup is П4.2, deliberately out of this slice.
-- Types: `distillate()` record keys and status names are defined once (Task 4) and reused verbatim in Tasks 5–6 tests.
-- Review Focus inputs each have a pinned test (Tasks 2–6 as listed above).
+- Spec coverage: §12.2-§12.9 → Tasks 2-6; §12.10 verification → show + `dom_context` (existing); §12.11 → Task 3; §12.3 capture filter → Tasks 2-3; §12.14 noise measures (marker pack versioning, support rule, splitter hardening) → Tasks 2-3. The brief-side `statements` rollup is П4.2, deliberately out of this slice.
+- Types: `distillate()` record keys and status names are defined once (Task 4) and reused verbatim in Tasks 5-6 tests.
+- Review Focus inputs each have a pinned test (Tasks 2-6 as listed above).
+
+## Closeout 0.2.4 (post-Task-7 audit)
+
+- **Naming:** the capture status stays `NO_STATEMENT` (the vocabulary pinned by
+  Tasks 2-3); the public `dom_distillate` refusal is `STATEMENT_NOT_FOUND`.
+  The two surfaces no longer collide, and no capture status is a tool refusal.
+- **Refusal surface:** `VARIANT_CONFLICT` is removed from `_HELP` and §12.5.
+  `DISTILLATE_VARIANT_CONFLICT` remains a §7 health code only.
+- **Deferred:** the per-session cap (`M` was never defined) and source-only
+  capture (`NO_DISTILLATE`) are documented limits, not implemented behavior.
+  NER stays out of the runtime; it may only be an offline audit oracle.
+- **Audit:** `tests/check_distillate_audit.py` pins word-number surfaces,
+  ordinary-word noise, quantifier/negation swaps, the capture/refusal name
+  split, the closed help table, and archived-source read-only behavior. All six
+  self-checks run against both host trees.

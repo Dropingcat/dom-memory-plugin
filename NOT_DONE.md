@@ -72,6 +72,29 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
 * **No statement rollup in the brief.** The `statements` rollup (П4.2) is
   deliberately out of this slice; statements are read one chain at a time with
   `dom_distillate(action='show')`.
+* **The per-session capture cap is not enforced.** The plan said "M per
+  session" but never defined `M`; guessing a number would be a policy change,
+  not a bug fix. Deduplication by the normalized prompt key is the only
+  suppression in 0.2.4.
+* **A captured source always gets a v1.** Source-only capture (the
+  `NO_DISTILLATE` health path) is not implemented; `NO_DISTILLATE` stays a
+  reserved §7 code. A future fix needs `propose` on a rootless source, which is
+  a separate feature.
+* **No NER in the runtime.** Capture is the deterministic marker pack. A NER
+  model may only be an offline audit oracle over a frozen corpus; it is not a
+  capture path and adds no network/model dependency to the hook.
+* **The V5 numeral pack is Russian.** `10` vs `десять` fails, but an English
+  word number (`ten`) is not compared to a digit: it is outside the explicit
+  surface pack and passes V5. Adding a language is a pack change with tests,
+  not a regex guess.
+* **`VARIANT_CONFLICT` is not a refusal.** Two accepted variants of one source
+  are reported only as the `DISTILLATE_VARIANT_CONFLICT` §7 health code; v1 has
+  no converge action for it. The refusal surface is `STATEMENT_NOT_FOUND`
+  (the capture status `NO_STATEMENT` is a different, non-refusal surface).
+* **An archived source is read-only.** `show` still reports it with
+  `source_state='superseded'` and no effective version; `propose`, `validate`,
+  `accept` and `withdraw` refuse with `STATEMENT_NOT_FOUND`. `dispute`/`resolve`
+  remain available for cleanup.
 
 ## Release / packaging
 
@@ -93,11 +116,13 @@ severity; nothing here is hidden — it is all known and deliberately scoped.
   (`tests/smoke_cold_start.py`, `tests/check_plan_context.py`,
   `tests/check_inbox_status.py`, `tests/check_plan_identity.py`,
   `tests/check_statement_capture.py`, `tests/check_distillate_extract.py`,
-  `tests/check_distillate_pipeline.py`). They cover the critical cold-start
+  `tests/check_distillate_pipeline.py`, `tests/check_distillate_audit.py`).
+  They cover the critical cold-start
   path, the plan context, the plan queue, plan identity, hook statement capture,
-  the marker/splitter primitives and the whole distillate chain in both host
-  trees. There is no test for the review policies, encryption, or the anthropic
-  provider.
+  the marker/splitter primitives, the whole distillate chain and its behavioural
+  edges (word-numbers, quantifier/negation swaps, name surfaces, archived
+  sources) in both host trees. There is no test for the review policies,
+  encryption, or the anthropic provider.
 * **No CI.** No GitHub Actions / pre-commit pipeline is configured yet.
 
 ## Known rough edges

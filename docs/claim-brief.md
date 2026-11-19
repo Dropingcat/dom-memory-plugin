@@ -362,7 +362,10 @@ more branched version because a statement can be challenged.
   separators.
 - Deduplication: `idempotency_key = stmt:<session>:<sha256(normalized
   prompt)>`; the server returns `ALREADY_RECORDED`.
-- Cap: one source per prompt, M per session. Failures never block the prompt.
+- Cap: one source per prompt. No per-session cap is enforced in 0.2.4: the
+  plan's `M` was never defined, so the limit is documented here instead of
+  guessed in code. Deduplication by the normalized key remains the only
+  suppression. Failures never block the prompt.
 
 ### 12.4 Deterministic extractive distillate (v1)
 
@@ -386,7 +389,10 @@ more branched version because a statement can be challenged.
   repeat of the same statement repairs a missing property (§12.9).
 - While it is effective, `DISTILLATE_EXTRACTIVE` (low) is reported. Improvement
   is optional.
-- If no sentence qualifies, no distillate is written; `NO_DISTILLATE` (medium).
+- If no sentence qualifies, the capture itself returns `NO_STATEMENT` and no
+  source is written. A captured source always gets a v1 in 0.2.4, so the
+  source-only / `NO_DISTILLATE` (medium) path is not implemented; the §7 health
+  code stays reserved for a future source-only capture.
 
 ### 12.5 The improvement pipeline (hard chain)
 
@@ -465,6 +471,10 @@ disputed --resolve--> the state computed without the conflict
 source correction --> old chain superseded
 ```
 
+- `STATEMENT_NOT_FOUND`: the id is not a captured statement source or a
+  distillate version of one, or the source is archived (readable with `show`,
+  but closed to new versions and reviews). The capture-side status
+  `NO_STATEMENT` is not a refusal and is never returned by `dom_distillate`.
 - `PROPOSAL_INVALID`: schema/provenance/anchor shape fails; nothing is
   written.
 - `PROPOSAL_CONFLICT`: the current version has the same normalized text but
@@ -478,7 +488,6 @@ source correction --> old chain superseded
   matching passing review for this exact version.
 - `DISTILLATE_DISPUTED`: an open conflict on the source or the candidate.
 - `DISTILLATE_LOOP`: three failed reviews for this logical claim.
-- `VARIANT_CONFLICT`: another accepted variant of the same source exists.
 - `NOT_CURRENT`: `validate`/`accept`/`withdraw` on an old version; read
   `show` and act on the current version.
 
@@ -517,7 +526,7 @@ with a short deterministic detail.
 | V2 PROVENANCE | candidate is `text`, `classification=interpretation`, `purpose` non-empty, `basis_spans.origin=agent`; it is the current version of the logical distillate | `V2_PROVENANCE` |
 | V3 ANCHORS | one anchor group per candidate sentence; 1–3 sentences; each anchor is a non-empty verbatim substring of the source; a quote that occurs more than once is refused with `SPAN_AMBIGUOUS` at `propose` time; stored offsets must satisfy `source[start:end] == quote` (a repeated sentence gets distinct offsets, so stored spans never need the once-rule); `candidate_digest` matches the candidate text | `V3_ANCHORS` |
 | V4 GROUNDING | per sentence, content tokens (the `plan_context` tokenizer and `_same` inflection match) against the anchored quotes: `novel <= 2` and `coverage >= 0.6`; if the sentence has ≤ 3 content tokens, `novel = 0` | `V4_GROUNDING` |
-| V5 FACTS | per sentence: every number token appears in the anchor; every non-initial capitalized token appears in the source case-insensitively; negation markers and quantifiers (`always/never/only/всегда/никогда/только`) have equal counts in the sentence and the anchor | `V5_FACTS` |
+| V5 FACTS | per sentence: every number surface appears in the anchor (digit tokens as written; word numerals only from the explicit `v1` surface pack, so `10` vs `десять` fails and ordinary words like `и` are ignored); every non-initial capitalized token appears in the source case-insensitively; negation markers and quantifiers (`always/never/only/всегда/никогда/только`) have equal counts in the sentence and the anchor | `V5_FACTS` |
 | V6 COMPRESSION | 1–3 sentences, each ≤ 300 chars; total ≤ 60% of the source when the source is ≥ 200 chars, otherwise ≤ the source; normalized text differs from the effective version's text | `V6_COMPRESSION` |
 | V7 DISPUTE | no open conflict on the source or the candidate | `V7_DISPUTE` |
 | V8 LOOP | fewer than three failed reviews for this logical claim | `V8_LOOP` |
@@ -602,7 +611,9 @@ into it.
   (`DISTILLATE_DISPUTED`, high) and the effective version falls back.
 - **Counter-claim**: a new version of the same logical distillate with the
   corrected text and anchors. Do not fork a statement in v1; a fork that
-  produces two accepted variants is `VARIANT_CONFLICT` (high).
+  produces two accepted variants is reported as `DISTILLATE_VARIANT_CONFLICT`
+  (high). This is a §7 health code, not a `dom_distillate` refusal: v1 has no
+  converge action for it.
 - **Resolve**: `dom_distillate(action='resolve')` writes a `resolve` event
   with the same `conflict_ref` on the same target, after the correction is
   accepted (or after the user confirms the source). Resolution does not edit
@@ -788,6 +799,12 @@ No new storage, no new trust: a bad proposal fails V4/V5 and is recorded as
   `DISTILLATE_LOOP`; withdraw → effective v2; dispute → source only; resolve
   + accept → accepted; a new version invalidates the old accept; retries are
   idempotent; two `show` runs are identical except `read_snapshot`.
+- `check_distillate_audit.py`: word-number surfaces (`10` vs `десять` fails
+  V5), an ordinary `и` is not a number, `всегда`→`никогда` and a dropped `не`
+  fail V5 with counts, the capture status `NO_STATEMENT` and the tool refusal
+  `STATEMENT_NOT_FOUND` stay separate, the help table is closed over every
+  literal `Denied` code, and an archived source is readable but takes no new
+  versions.
 - `check_brief_hook.py`: one line; silence when the state is unchanged; a new
   line after the gaps change.
 - Both host trees stay byte-identical; the dist archives are rebuilt.
@@ -808,7 +825,11 @@ No new storage, no new trust: a bad proposal fails V4/V5 and is recorded as
 - A statement is global until an item-level claim cites it; v1 does not
   auto-link.
 - The improvement chain stops after three failed reviews per source.
-- No embeddings and no LLM inside the hook or the validator.
+- No embeddings and no LLM inside the hook or the validator. NER is not part
+  of the runtime: capture stays a deterministic marker pack. A NER model may
+  only be an offline audit oracle over a frozen corpus, never a capture path.
+- A captured source always has a v1; source-only capture is not implemented.
+- The per-session capture cap is not enforced; deduplication is by text.
 
 ## 16. Plan mapping
 
