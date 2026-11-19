@@ -5,7 +5,8 @@ implementation is silently wrong, and where two names or two states could be
 confused by a caller:
 
 1. word-numbers: the source says ``10``, the proposal says ``десять`` -> V5
-   fails on surface forms (the values are equal, the texts are not);
+   fails on surface forms (the values are equal, the texts are not); a repeated
+   number (``10 10`` against an anchor with one ``10``) also fails;
 2. an ordinary ``и`` is not a number: a faithful compression with ``и`` has a
    passing V5 (the old tokenizer reported ``{'numbers': ['и']}``);
 3. a quantifier swap ``всегда`` -> ``никогда`` fails V5 with both counts;
@@ -69,6 +70,15 @@ if v.get('status') != 'REVIEW_FAILED' or 'V5_FACTS' not in v.get('failed', []):
     bad('10 vs десять must fail V5: %r' % v)
 if v['detail']['V5_FACTS'].get('numbers') != ['десять']:
     bad('the V5 detail must name the word surface: %r' % v['detail']['V5_FACTS'])
+
+# 1b. a repeated number is a fact change, not a free extra token
+long_source = 'Мы фиксируем ' + ('очень длинное описание ' * 10) + '10 итераций.'
+cap = distillate.capture(svc, long_source, 's1b')
+if cap.get('status') != 'STATEMENT_RECORDED':
+    bad('capture repeated number: %r' % cap)
+v = review(cap['source_id'], 'Мы фиксируем 10 10 итераций.', [['10 итераций.']])
+if 'V5_FACTS' not in v.get('failed', []) or v['detail']['V5_FACTS'].get('numbers') != ['10']:
+    bad('a repeated number must fail V5: %r' % v)
 
 # 2. an ordinary word is not a number; a faithful compression passes V5
 cap = distillate.capture(svc, 'Мы фиксируем слой. Мы проверяем результат.', 's2')
@@ -170,8 +180,9 @@ def check(tree):
         if run.returncode != 0 or 'PASS' not in run.stdout:
             print('FAIL[%s]: %s' % (tree, (run.stdout + run.stderr)[-700:]))
             return False
-        print('  %s/: PASS — word-numbers, ordinary words, quantifier and negation swaps, '
-              'capture/refusal split, closed help table, archived-source read-only' % tree)
+        print('  %s/: PASS — word-number surfaces (including repeats), ordinary words, '
+              'quantifier and negation swaps, capture/refusal split, closed help table, '
+              'archived-source read-only' % tree)
         return True
     finally:
         for path in sorted(scratch.rglob('*'), reverse=True):

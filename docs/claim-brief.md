@@ -526,7 +526,7 @@ with a short deterministic detail.
 | V2 PROVENANCE | candidate is `text`, `classification=interpretation`, `purpose` non-empty, `basis_spans.origin=agent`; it is the current version of the logical distillate | `V2_PROVENANCE` |
 | V3 ANCHORS | one anchor group per candidate sentence; 1–3 sentences; each anchor is a non-empty verbatim substring of the source; a quote that occurs more than once is refused with `SPAN_AMBIGUOUS` at `propose` time; stored offsets must satisfy `source[start:end] == quote` (a repeated sentence gets distinct offsets, so stored spans never need the once-rule); `candidate_digest` matches the candidate text | `V3_ANCHORS` |
 | V4 GROUNDING | per sentence, content tokens (the `plan_context` tokenizer and `_same` inflection match) against the anchored quotes: `novel <= 2` and `coverage >= 0.6`; if the sentence has ≤ 3 content tokens, `novel = 0` | `V4_GROUNDING` |
-| V5 FACTS | per sentence: every number surface appears in the anchor (digit tokens as written; word numerals only from the explicit `v1` surface pack, so `10` vs `десять` fails and ordinary words like `и` are ignored); every non-initial capitalized token appears in the source case-insensitively; negation markers and quantifiers (`always/never/only/всегда/никогда/только`) have equal counts in the sentence and the anchor | `V5_FACTS` |
+| V5 FACTS | per sentence: every number surface appears in the anchor and none occurs more often than in the anchor (digit tokens as written; word numerals only from the explicit `v1` surface pack, so `10` vs `десять` fails and ordinary words like `и` are ignored); every non-initial capitalized token appears in the source case-insensitively; negation markers and quantifiers (`always/never/only/всегда/никогда/только`) have equal counts in the sentence and the anchor | `V5_FACTS` |
 | V6 COMPRESSION | 1–3 sentences, each ≤ 300 chars; total ≤ 60% of the source when the source is ≥ 200 chars, otherwise ≤ the source; normalized text differs from the effective version's text | `V6_COMPRESSION` |
 | V7 DISPUTE | no open conflict on the source or the candidate | `V7_DISPUTE` |
 | V8 LOOP | fewer than three failed reviews for this logical claim | `V8_LOOP` |
@@ -800,7 +800,8 @@ No new storage, no new trust: a bad proposal fails V4/V5 and is recorded as
   + accept → accepted; a new version invalidates the old accept; retries are
   idempotent; two `show` runs are identical except `read_snapshot`.
 - `check_distillate_audit.py`: word-number surfaces (`10` vs `десять` fails
-  V5), an ordinary `и` is not a number, `всегда`→`никогда` and a dropped `не`
+  V5) and a repeated number (`10 10` against one anchored `10`), an ordinary
+  `и` is not a number, `всегда`→`никогда` and a dropped `не`
   fail V5 with counts, the capture status `NO_STATEMENT` and the tool refusal
   `STATEMENT_NOT_FOUND` stay separate, the help table is closed over every
   literal `Denied` code, and an archived source is readable but takes no new

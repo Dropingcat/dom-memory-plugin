@@ -23,6 +23,7 @@ here executes it, and a failure never blocks a prompt (the hook catches).
 import hashlib
 import json
 import re
+from collections import Counter
 from datetime import datetime, timezone
 
 from .plan_context import _same, _tokens
@@ -991,8 +992,9 @@ def _check_v5(spans, sentences, source_text):
     source_fold = source_text.casefold().replace('ё', 'е')
     for i, sentence in enumerate(sentences):
         anchor = _anchor_text(stored[i])
-        for token in _numeral_tokens(sentence):
-            if token not in _numeral_tokens(anchor):
+        anchor_numbers = Counter(_numeral_tokens(anchor))
+        for token, count in Counter(_numeral_tokens(sentence)).items():
+            if count > anchor_numbers.get(token, 0):
                 return {'sentence': i, 'numbers': [token]}
         words = _WORD_CASED.findall(sentence)
         capitals = [w for w in words[1:] if w[:1].isupper()]
