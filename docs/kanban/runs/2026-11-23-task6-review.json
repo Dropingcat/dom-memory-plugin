@@ -1,0 +1,13 @@
+{
+  "block": "TASK6",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": ["docs/releases/0.2.6.md", "docs/superpowers/plans/2026-11-23-host-observability-0.2.6.md", "docs/kanban/2026-11-20-dom-memory-kanban.md"],
+  "checks": [
+    {"check": "release card exists", "result": "yes"},
+    {"check": "version untouched", "result": "VERSION still 0.2.4"},
+    {"check": "approval gates named", "result": "VERSION, dist/install, restart, push, tag"}
+  ],
+  "findings": [],
+  "notes": "Docs-only card. No release action performed."
+}

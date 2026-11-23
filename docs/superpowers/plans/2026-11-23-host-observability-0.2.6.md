@@ -272,6 +272,8 @@ Expected: PASS; evidence file exists. Production decision is 0.3.0 with a user-a
 
 ### Task 6: Docs and release card split
 
+**Status: DONE (2026-11-23).** Release card: `docs/releases/0.2.6.md`. No VERSION bump, dist, install, restart, or push; those are approval-gated.
+
 **Files:**
 - Modify: `README.md`, `NOT_DONE.md`, `opencode/skills/dom-memory/SKILL.md`, `claude/skills/dom-memory/SKILL.md`, `docs/kanban/2026-11-20-dom-memory-kanban.md`
 - Create: release card in the kanban
