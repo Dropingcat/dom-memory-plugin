@@ -47,10 +47,17 @@ def main() -> int:
             timeout=30,
         )
         assert result.returncode == 0, result.stderr
+        if result.stderr:
+            print("stderr:", result.stderr)
         assert "[DOM MEMORY INDEX]" in result.stdout, result.stdout
         assert "plan r1" in result.stdout, result.stdout
         assert "claims" in result.stdout, result.stdout
-    print("PASS dom_index_injection: baseline index printed when no check is due")
+        assert "ROOT:" in result.stdout, result.stdout
+        assert "LINE:" in result.stdout, result.stdout
+        assert "CURRENT" in result.stdout, result.stdout
+        assert "ACTIVE:" in result.stdout, result.stdout
+        assert "CHECKLIST:" in result.stdout, result.stdout
+    print("PASS dom_index_injection: root/line/current/checklist brief printed when no check is due")
     return 0
 
 
