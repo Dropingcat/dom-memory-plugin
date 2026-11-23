@@ -717,6 +717,8 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-23 | J5.1 (new) | — | DONE | MCP plan-ingest probe: 10 runs, p50 236.591 ms, p95 342.362 ms, all `PLAN_INGESTED`; missing `origin/session/base_revision/contexts/stamp`; no production change; evidence `docs/kanban/runs/2026-11-23-mcp-plan-ingest.md` | orchestrator |
 | 2026-11-23 | J6.1 (new) | — | DONE | release card `docs/releases/0.2.6.md`: checks, dist/install/restart/push gates, rollback, known gaps; VERSION не менялся | orchestrator |
 | 2026-11-23 | I0.1 (0.2.6) | — | DONE | live 0.2.6: install target обновлён, backup 0.2.4, service restart, live MCP `DESCRIBED`/`PLAN_STATUS`, 13 snapshots, monitor `CHAIN_OK`/224 claims; evidence `docs/kanban/runs/2026-11-23-live-0.2.6.md` | orchestrator |
+| 2026-11-23 | I1.1 (0.2.6) | — | DONE | GitHub release `v0.2.6` с assets `opencode-dom-memory-0.2.6.zip` и `dom-memory.plugin`; tags `v0.2.4`/`v0.2.6`; main `b48034c` | orchestrator |
+| 2026-11-23 | — | — | — | three-line policy `docs/VERSIONS.md`: live main+v0.2.6, pre-release `feature/trusted-write-loop-0.3.0`, planned 0.3.1+ | orchestrator |
 
 ### 17.1. Метрики доски
 
