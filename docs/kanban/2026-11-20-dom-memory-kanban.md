@@ -714,6 +714,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-23 | J2.1 (new) | — | DONE | `snapshot`: `dom.prompt-snapshot/2`, system/messages/tools/options/dom.notes, hash before truncation, redaction, 300k truncation test, registered-handler integration; `node --test tests/check_prompt_snapshot.mjs` 3/3; evidence `docs/kanban/runs/2026-11-23-task2-snapshot.md` | orchestrator |
 | 2026-11-23 | J3.1/J3.2 (new) | — | DONE | monitor API: health/claims/claim/hooks/snapshots/snapshot/plan; token, Host, no CORS, traversal, corrupt DB; `check_monitor_api.py` PASS; real probe `CHAIN_OK`, 212 claims, r16 | orchestrator |
 | 2026-11-23 | J4.1 (new) | — | DONE | web UI: Hooks & injections, DOM claims, Plan, Health; snapshot blocks; `textContent` only; `check_monitor_ui.py` PASS; real UI 200 | orchestrator |
+| 2026-11-23 | J5.1 (new) | — | DONE | MCP plan-ingest probe: 10 runs, p50 236.591 ms, p95 342.362 ms, all `PLAN_INGESTED`; missing `origin/session/base_revision/contexts/stamp`; no production change; evidence `docs/kanban/runs/2026-11-23-mcp-plan-ingest.md` | orchestrator |
 
 ### 17.1. Метрики доски
 

@@ -254,6 +254,8 @@ Vanilla JS, `textContent` only, CSP, token in memory after an exchange. Hooks ta
 
 ### Task 5: MCP plan-ingest latency probe
 
+**Status: DONE (2026-11-23).** Evidence: `docs/kanban/runs/2026-11-23-mcp-plan-ingest.md`. 10 runs: p50 236.591 ms, p95 342.362 ms, all `PLAN_INGESTED`; five hook-equivalence fields missing.
+
 **Files:**
 - Create: `tests/probe_mcp_plan_ingest.py`
 - Evidence: `docs/kanban/runs/2026-11-23-mcp-plan-ingest.md`

@@ -1,0 +1,17 @@
+{
+  "block": "TASK5",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": ["tests/probe_mcp_plan_ingest.py", "docs/kanban/runs/2026-11-23-mcp-plan-ingest.md"],
+  "checks": [
+    {"check": "python -B tests/probe_mcp_plan_ingest.py", "result": "10 runs, p50 236.591 ms, p95 342.362 ms, all PLAN_INGESTED"}
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "text": "MCP plan_ingest lacks origin/session/base_revision/contexts/stamp.",
+      "action": "productionization is 0.3.0 with an agreed threshold"
+    }
+  ],
+  "notes": "Self-review. No production code changed."
+}
