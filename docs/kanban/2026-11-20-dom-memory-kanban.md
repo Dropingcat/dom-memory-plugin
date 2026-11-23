@@ -720,6 +720,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-23 | I1.1 (0.2.6) | — | DONE | GitHub release `v0.2.6` с assets `opencode-dom-memory-0.2.6.zip` и `dom-memory.plugin`; tags `v0.2.4`/`v0.2.6`; main `b48034c` | orchestrator |
 | 2026-11-23 | — | — | — | three-line policy `docs/VERSIONS.md`: live main+v0.2.6, pre-release `feature/trusted-write-loop-0.3.0`, planned 0.3.1+ | orchestrator |
 | 2026-11-24 | — | — | — | monitor: local token `start.py`, claims versions/properties, plan tree, snapshot block origins; analysis `docs/kanban/runs/2026-11-24-monitor-analysis.md`; plan r16 mixes legacy P1–P4 and current P5–P13 | orchestrator |
+| 2026-11-24 | — | — | — | baseline DOM index: `plan_check_hook.py` prints plan/revision/items/open/claims when no check is due; `check_dom_index_injection.py` PASS; install target hook updated; D-021…D-025 claim-organization requirements recorded | orchestrator |
 
 ### 17.1. Метрики доски
 

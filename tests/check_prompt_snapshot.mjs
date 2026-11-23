@@ -103,5 +103,6 @@ test("context hook writes a snapshot through the registered handler", async () =
   assert.equal(snap.schema, "dom.prompt-snapshot/2")
   assert.equal(snap.session_id, "ses_snap")
   assert.ok(snap.counts.system_blocks >= 1)
+  assert.ok(snap.dom.notes.length >= 1, "expected the queued DOM note in the snapshot")
   cleanup()
 })
