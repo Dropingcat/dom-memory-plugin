@@ -710,6 +710,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-22 | — | — | — | доска занесена в live MCP: план П5–П13 (r16, 43 пункта, 0 archived), решения D-001–D-012, root claim `55b50e87`, code claim `f48f7a88`; live `dom_plan_status` всё ещё 0.2.4 → B0.3 до restart | orchestrator |
 | 2026-11-23 | — | — | — | два строгих аудита отклонили смешанный план; принят split D-020: 0.2.6 — наблюдаемость, 0.3.0 — WriteContext/claim_sessions/read_receipts/гейт | orchestrator |
 | 2026-11-23 | J0.1 (new) | — | DONE | единый resolver `paths.py`, `DOM_DIRECTORY` wins; `dom_describe` отдаёт `directory`/`db_path`; `memory_preflight.py` + registry; tests PASS; probe `DESCRIBED`; evidence `docs/kanban/runs/2026-11-23-task0-memory-paths.md` | orchestrator |
+| 2026-11-23 | J1.1 (new) | — | DONE | `observability.js`: per-PID JSONL, 64 KiB cap, retention, redaction, `dropped`; hooks record duration/session/injected/db_path; `node --test tests/check_observability.mjs` 3/3; evidence `docs/kanban/runs/2026-11-23-task1-observability.md` | orchestrator |
 
 ### 17.1. Метрики доски
 

@@ -38,10 +38,11 @@
  */
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { createObservability, preview, sha256 } from "./observability.js"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PLAN_MAX_AGE_MS = 15 * 60 * 1000
@@ -182,6 +183,19 @@ export async function register(ctx) {
     console.error("[dom-memory hooks] disabled by options.enabled=false")
     return () => {}
   }
+  const runDir = domDir || join(projectDir, ".dom-memory", "main")
+  const dbFile = join(runDir, "dom.sqlite3")
+  let dbPath = dbFile
+  try {
+    dbPath = realpathSync(dbFile)
+  } catch {
+    /* the database is created by the first hook run */
+  }
+  const observability = createObservability({
+    projectDir,
+    pid: process.pid,
+    retentionDays: Number(options.retentionDays) > 0 ? Number(options.retentionDays) : 7,
+  })
   console.error(`[dom-memory hooks] root=${root} project=${projectDir} planDir=${planDir}`)
 
   const pending = new Map()
@@ -243,11 +257,28 @@ export async function register(ctx) {
   /* Claude UserPromptSubmit: the duty cycle runs on every user prompt. */
   registrations.push(
     await ctx.session.hook("prompt", (event) => {
+      const started = performance.now()
+      const sessionID = sessionOf(event)
+      let note = ""
+      let error = null
       try {
-        queue(sessionOf(event), planCheck(event?.prompt?.text ?? "", sessionOf(event)))
-      } catch (error) {
-        console.error("[dom-memory hooks] prompt:", error)
+        note = planCheck(event?.prompt?.text ?? "", sessionID)
+        queue(sessionID, note)
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught)
+        console.error("[dom-memory hooks] prompt:", caught)
       }
+      observability.record({
+        hook: "prompt",
+        phase: "after",
+        session_id: sessionID || null,
+        duration_ms: Math.round(performance.now() - started),
+        source: "dom.plan_check",
+        status: error ? "error" : note ? "ok" : "silent",
+        injected: note ? { notes: 1, chars: note.length, sha256: sha256(note), preview: preview(note) } : null,
+        error,
+        db_path: dbPath,
+      })
     }),
   )
 
@@ -255,9 +286,13 @@ export async function register(ctx) {
      non-plan agent (build) makes its first model call after the plan file was written. */
   registrations.push(
     await ctx.session.hook("context", (event) => {
+      const started = performance.now()
       const notes = []
       const sessionID = sessionOf(event)
+      const systemBefore = Array.isArray(event.system) ? event.system.length : 0
       const queued = pending.get(sessionID)
+      const queuedCount = queued?.length ?? 0
+      let error = null
       if (queued?.length) {
         notes.push(...queued)
         pending.delete(sessionID)
@@ -280,10 +315,33 @@ export async function register(ctx) {
             }
           }
         }
-      } catch (error) {
-        console.error("[dom-memory hooks] context:", error)
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught)
+        console.error("[dom-memory hooks] context:", caught)
       }
-      if (notes.length) event.system.push({ type: "text", text: notes.join("\n\n") })
+      const injectedText = notes.join("\n\n")
+      if (notes.length) {
+        if (!Array.isArray(event.system)) event.system = []
+        event.system.push({ type: "text", text: injectedText })
+      }
+      observability.record({
+        hook: "context",
+        phase: "after",
+        session_id: sessionID || null,
+        duration_ms: Math.round(performance.now() - started),
+        source: "dom.context",
+        status: error ? "error" : notes.length ? "injected" : "silent",
+        extracted: { queued: queuedCount },
+        injected: notes.length
+          ? { notes: notes.length, chars: injectedText.length, sha256: sha256(injectedText), preview: preview(injectedText) }
+          : null,
+        context: {
+          system_blocks_before: systemBefore,
+          system_blocks_after: Array.isArray(event.system) ? event.system.length : systemBefore,
+        },
+        error,
+        db_path: dbPath,
+      })
     }),
   )
 
@@ -291,6 +349,7 @@ export async function register(ctx) {
     for (const registration of registrations) {
       Promise.resolve(registration?.dispose?.()).catch(() => {})
     }
+    observability.close()
   }
 }
 

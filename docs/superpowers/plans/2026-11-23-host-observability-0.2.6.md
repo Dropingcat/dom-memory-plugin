@@ -24,8 +24,8 @@
 
 **Mirror list (0.2.6):**
 - Python shared: `opencode/mockup/paths.py`, `claim_entry.py`, `server.py`, `opencode/hooks/plan_hook.py`, `plan_check_hook.py`, `opencode/mockup/watcher.py` → `claude/`.
-- JS shared: `opencode/index.js` → `claude/opencode-plugin/index.js`.
-- OpenCode-only in 0.2.6: `opencode/observability.js`, `opencode/monitor/**` (the Claude tree does not ship the web monitor). This is an explicit exception, not an omission.
+- JS shared: `opencode/index.js` → `claude/opencode-plugin/index.js`; `opencode/observability.js` → `claude/opencode-plugin/observability.js`.
+- OpenCode-only in 0.2.6: `opencode/monitor/**` (the Claude tree does not ship the web monitor). This is an explicit exception, not an omission.
 
 ## Review Focus
 
@@ -106,6 +106,8 @@ Mirror `paths.py`, `dom_server.py`, hooks, `watcher.py`, `claim_entry.py`, `serv
 ---
 
 ### Task 1: Observability writer and journal
+
+**Status: DONE (2026-11-23).** Evidence: `docs/kanban/runs/2026-11-23-task1-observability.md`. `node --test tests/check_observability.mjs` → 3/3 pass; mirror SHA256 equal.
 
 **Files:**
 - Create: `opencode/observability.js`
