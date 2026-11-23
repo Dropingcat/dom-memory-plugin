@@ -1,13 +1,15 @@
 {
   "name": "opencode-dom-memory",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "description": "DOM project-memory hooks + MCP server for OpenCode: append-only, versioned claims; a plan becomes a tree of claims on auto-allocated branches; a hash-chained ledger under <project>/.dom-memory. Created automatically on the first task.",
   "type": "module",
   "main": "index.js",
   "files": [
     "index.js",
+    "observability.js",
     "hooks/",
     "mockup/",
+    "monitor/",
     "scripts/",
     "skills/",
     "README.md",

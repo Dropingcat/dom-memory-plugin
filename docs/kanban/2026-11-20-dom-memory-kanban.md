@@ -716,6 +716,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-23 | J4.1 (new) | — | DONE | web UI: Hooks & injections, DOM claims, Plan, Health; snapshot blocks; `textContent` only; `check_monitor_ui.py` PASS; real UI 200 | orchestrator |
 | 2026-11-23 | J5.1 (new) | — | DONE | MCP plan-ingest probe: 10 runs, p50 236.591 ms, p95 342.362 ms, all `PLAN_INGESTED`; missing `origin/session/base_revision/contexts/stamp`; no production change; evidence `docs/kanban/runs/2026-11-23-mcp-plan-ingest.md` | orchestrator |
 | 2026-11-23 | J6.1 (new) | — | DONE | release card `docs/releases/0.2.6.md`: checks, dist/install/restart/push gates, rollback, known gaps; VERSION не менялся | orchestrator |
+| 2026-11-23 | I0.1 (0.2.6) | — | DONE | live 0.2.6: install target обновлён, backup 0.2.4, service restart, live MCP `DESCRIBED`/`PLAN_STATUS`, 13 snapshots, monitor `CHAIN_OK`/224 claims; evidence `docs/kanban/runs/2026-11-23-live-0.2.6.md` | orchestrator |
 
 ### 17.1. Метрики доски
 

@@ -1,6 +1,6 @@
 [project]
 name = "dom-memory-plugin"
-version = "0.2.4"
+version = "0.2.6"
 description = "DOM project-memory plugin (Claude Code + OpenCode): append-only claims, plan tree, hash-chained ledger in <project>/.dom-memory, stdio MCP server."
 requires-python = ">=3.11"
 license = {text = "MIT"}

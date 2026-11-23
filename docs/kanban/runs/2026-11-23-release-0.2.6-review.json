@@ -1,0 +1,26 @@
+{
+  "block": "RELEASE-0.2.6",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": [
+    "VERSION",
+    "opencode/VERSION",
+    "claude/VERSION",
+    "opencode/package.json",
+    "pyproject.toml",
+    "claude/.claude-plugin/plugin.json",
+    "README.md",
+    "dist/claude/dom-memory.plugin",
+    "dist/opencode/opencode-dom-memory-0.2.6.zip"
+  ],
+  "checks": [
+    {"check": "release test suite", "result": "PASS"},
+    {"check": "live MCP dom_describe", "result": "DESCRIBED + directory/db_path + CHAIN_OK"},
+    {"check": "live MCP dom_plan_status", "result": "PLAN_STATUS inbox 0/0, r16"},
+    {"check": "live observability", "result": "13 hooks, 13 snapshots, dropped=0"},
+    {"check": "live monitor", "result": "CHAIN_OK, 224 claims, 13 snapshots"},
+    {"check": "zips", "result": "opencode 0.2.6 includes observability.js+monitor; claude 0.2.6 includes opencode-plugin/observability.js"}
+  ],
+  "findings": [],
+  "notes": "Deployer commit only. Push/tag/GitHub release is a separate approved step."
+}
