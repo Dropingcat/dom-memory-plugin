@@ -135,6 +135,23 @@ skill loads, teaching the agent how to use the memory.
 `/mcps` shows `dom-memory`; `dom_describe` answers `READY`. Ask for the plan status
 after your plan agent has written a plan — it should arrive as branches of claims.
 
+### B5. Monitor (optional)
+
+Start the read-only monitor with a persistent local token:
+
+```powershell
+$py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
+& $py opencode/monitor/start.py `
+  --project E:\path\to\your\project `
+  --port 8765 `
+  --open
+```
+
+The script creates/reuses `<project>/.dom-memory/observability/monitor.token`,
+prints the URL and token, and opens the browser. The UI shows hooks, prompt
+snapshots (system blocks with origin), claims with versions/properties, the plan
+tree, and health. The token is local; do not put it in the URL or commit it.
+
 ---
 
 ## Options (OpenCode `plugins[].options`)

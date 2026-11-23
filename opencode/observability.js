@@ -22,7 +22,7 @@ const MAX_TOOLS = 200
 const MAX_OPTIONS_CHARS = 20_000
 const MAX_NOTE_CHARS = 4_000
 const MAX_NOTES = 50
-const SECRET_KEY = /authorization|token|secret|apiKey|password/i
+const SECRET_KEY = /^(authorization|token|access_token|refresh_token|id_token|api[_-]?key|secret|client_secret|password)$/i
 const SECRET_TEXT = [
   /sk-[A-Za-z0-9_-]{8,}/g,
   /ghp_[A-Za-z0-9]{20,}/g,
@@ -123,11 +123,12 @@ function projectTools(tools, full) {
 function projectNotes(notes, full) {
   const list = Array.isArray(notes) ? notes : []
   return list.slice(0, MAX_NOTES).map((note) => {
-    if (typeof note === "string") return { text: deepRedact(note, full), source: "dom", claim_ids: [] }
+    if (typeof note === "string") return { text: deepRedact(note, full), source: "dom", claim_ids: [], origin: "dom" }
     return {
       text: deepRedact(note?.text || "", full),
       source: String(note?.source || "dom"),
       claim_ids: Array.isArray(note?.claim_ids) ? note.claim_ids.map(String) : [],
+      origin: "dom",
     }
   })
 }
@@ -138,6 +139,30 @@ function countChars(value) {
   } catch {
     return 0
   }
+}
+
+function classifyBlock(block) {
+  const instructions = block?.metadata?.experimental?.instructions
+  if (Array.isArray(instructions) && instructions.length) {
+    const keys = instructions.map((item) => item?.key).filter(Boolean)
+    if (keys.length) return keys.join(",")
+  }
+  const text = String(block?.text || "")
+  if (text.startsWith("You are an AI agent running in OpenCode")) return "core/system"
+  if (text.startsWith("# Your Model")) return "core/model"
+  if (text.startsWith("When you create a worktree")) return "core/worktree"
+  if (text.startsWith("[harness-superpowers-planning")) return "plugin/harness-superpowers-planning"
+  if (text.startsWith("[DOM")) return "dom"
+  return "unknown"
+}
+
+function domToolsFromSystem(system) {
+  const codemode = system.find((block) =>
+    Array.isArray(block?.metadata?.experimental?.instructions)
+      && block.metadata.experimental.instructions.some((item) => item?.key === "core/codemode"),
+  )
+  const text = String(codemode?.text || "")
+  return [...new Set([...text.matchAll(/tools\["dom-memory"\]\.([A-Za-z0-9_]+)/g)].map((match) => match[1]))]
 }
 
 export function createObservability({
@@ -309,6 +334,19 @@ export function createObservability({
         tools: Object.keys(body.tools).length,
         chars: countChars({ system: body.system, messages: body.messages, notes }),
       }
+      body.system_blocks = body.system.map((block, index) => ({
+        index,
+        origin: classifyBlock(block),
+        chars: String(block.text || "").length,
+        head: preview(block.text || "", 120),
+      }))
+      body.origin_summary = body.system_blocks.reduce((out, block) => {
+        out[block.origin] = (out[block.origin] || 0) + 1
+        return out
+      }, {})
+      body.dom_tools = domToolsFromSystem(body.system)
+      body.counts.system_origins = body.origin_summary
+      body.counts.dom_tools = body.dom_tools.length
       const sha256Full = sha256(canonicalJson(body))
       const stored = truncateSnapshot(body)
       stored.sha256_full = sha256Full

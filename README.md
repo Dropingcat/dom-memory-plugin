@@ -99,8 +99,10 @@ Install:
 * **Claude Code:** install `dom-memory.plugin` via **Settings → Plugins → Install
   from file** (or `claude plugin install /path/to/dom-memory.plugin`). Full steps:
   [`GET_STARTED.md`](GET_STARTED.md) Option A.
-* **Monitor:** `python opencode/monitor/server.py --project <project> --port 8765 --print-token`,
-  then open `http://127.0.0.1:8765` and enter the token.
+* **Monitor:** `python opencode/monitor/start.py --project <project> --port 8765 --open`.
+  The local token is created once at
+  `<project>/.dom-memory/observability/monitor.token` and reused on later starts;
+  the script prints the URL and token. Open `http://127.0.0.1:8765` and enter the token.
 
 Release notes and known limitations: [`docs/releases/0.2.6-notes.md`](docs/releases/0.2.6-notes.md).
 

@@ -35,6 +35,9 @@ def main() -> int:
             svc.start(request="monitor api test")
             claim = svc.claim("main", "text", "monitor claim")
             claim_id = claim["claim_id"]
+            updated = svc.update(claim_id, "monitor claim v2", "monitor api version test")
+            claim_id = updated["new_claim_id"]
+            svc.annotate(claim_id, "property", name="note", value="hello")
         finally:
             if previous is None:
                 os.environ.pop("DOM_RUNTIME_ROOT", None)
@@ -64,6 +67,12 @@ def main() -> int:
 
             status, detail, _ = get_json(monitor.url, "t", "/api/claim/" + claim_id)
             assert status == 200 and detail["claim_id"] == claim_id, detail
+            assert detail["version"] >= 2, detail
+            assert len(detail["versions"]) >= 2, detail
+            assert any(p["name"] == "note" for p in detail["properties"]), detail
+
+            status, plan_tree, _ = get_json(monitor.url, "t", "/api/plan/tree")
+            assert status == 200 and plan_tree["status"] == "OK" and "tasks" in plan_tree, plan_tree
 
             status, hooks, _ = get_json(monitor.url, "t", "/api/hooks")
             assert status == 200 and hooks["items"][0]["hook"] == "prompt", hooks

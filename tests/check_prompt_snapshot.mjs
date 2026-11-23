@@ -24,10 +24,17 @@ test("snapshot stores blocks, redacts secrets, and hashes the full semantic inpu
     agent: "build",
     kind: "primary",
     model: { providerID: "p", id: "m" },
-    system: [{ type: "text", text: "base token sk-abc12345" }],
+    system: [
+      { type: "text", text: "base token sk-abc12345" },
+      {
+        type: "text",
+        text: 'tools["dom-memory"].dom_find and tools["dom-memory"].dom_claim',
+        metadata: { experimental: { instructions: [{ key: "core/codemode", text: "catalog" }] } },
+      },
+    ],
     messages: [{ role: "user", content: [{ type: "text", text: "token sk-abc12345 and task" }] }],
     tools: { read: { description: "read", inputSchema: { type: "object" }, execute: () => {} } },
-    options: { temperature: 0.2, apiKey: "secret" },
+    options: { temperature: 0.2, apiKey: "secret", maxTokens: 1000 },
   }
   const result = obs.snapshot(event, { source: "dom.context", notes: ["[DOM MEMORY INDEX] plan r16"] })
   assert.ok(result && result.path)
@@ -35,6 +42,11 @@ test("snapshot stores blocks, redacts secrets, and hashes the full semantic inpu
   assert.equal(snap.schema, "dom.prompt-snapshot/2")
   assert.equal(snap.dom.notes.length, 1)
   assert.equal(snap.options.apiKey, "[REDACTED]")
+  assert.equal(snap.options.maxTokens, 1000)
+  assert.equal(snap.system_blocks[1].origin, "core/codemode")
+  assert.equal(snap.origin_summary["core/codemode"], 1)
+  assert.ok(snap.dom_tools.includes("dom_find"), snap.dom_tools)
+  assert.ok(snap.dom_tools.includes("dom_claim"), snap.dom_tools)
   assert.doesNotMatch(JSON.stringify(snap.messages), /sk-abc12345/)
   assert.doesNotMatch(JSON.stringify(snap.system), /sk-abc12345/)
   assert.equal(snap.tools.read.input_schema.type, "object")

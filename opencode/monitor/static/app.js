@@ -73,6 +73,18 @@ async function loadSnapshot(id) {
     const snap = await api(`/api/snapshot/${id}`)
     const blocks = []
     blocks.push(el("p", { text: `schema ${snap.schema || "?"} · truncated ${snap.truncated} · hook_order ${snap.hook_order || "?"}` }))
+    if (Array.isArray(snap.system_blocks)) {
+      blocks.push(el("h3", { text: "system blocks" }))
+      blocks.push(table(["#", "origin", "chars", "head"], snap.system_blocks.map((block) => [
+        block.index,
+        block.origin,
+        block.chars,
+        block.head,
+      ])))
+    }
+    if (Array.isArray(snap.dom_tools) && snap.dom_tools.length) {
+      blocks.push(el("p", { text: `DOM tools in Code Mode: ${snap.dom_tools.join(", ")}` }))
+    }
     for (const key of ["system", "messages", "tools", "options", "dom"]) {
       blocks.push(el("h3", { text: key }))
       blocks.push(el("pre", { class: "detail", text: JSON.stringify(snap[key] ?? null, null, 2) }))
@@ -83,22 +95,71 @@ async function loadSnapshot(id) {
   }
 }
 
+function showClaimDetail(item) {
+  const view = $("claim-detail")
+  const meta = [
+    ["claim", item.claim_id],
+    ["logical", item.logical_claim_id],
+    ["version", item.version],
+    ["state", item.is_current ? "current" : "retired"],
+    ["type", item.type],
+    ["branch", item.branch],
+    ["review", item.origin_version],
+  ]
+  const anatomy = item.anatomy || {}
+  const anatomyRows = []
+  if (anatomy.purpose) anatomyRows.push(["purpose", anatomy.purpose])
+  if (anatomy.basis) anatomyRows.push(["basis", anatomy.basis.join(", ")])
+  if (anatomy.usage) anatomyRows.push(["usage", anatomy.usage.join(", ")])
+  if (anatomy.keywords) anatomyRows.push(["keywords", anatomy.keywords.join(", ")])
+  if (anatomy.refines) anatomyRows.push(["refines", anatomy.refines])
+  const properties = (item.properties || []).map((property) => [
+    property.name,
+    typeof property.value === "string" ? property.value : JSON.stringify(property.value),
+    property.reason || "",
+  ])
+  const versions = (item.versions || []).map((version) => [
+    version.version,
+    version.claim_id ? version.claim_id.slice(0, 8) : "",
+    version.is_current ? "yes" : "no",
+    version.supersedes ? version.supersedes.slice(0, 8) : "",
+  ])
+  const raw = el("details", {}, [
+    el("summary", { text: "raw JSON (hashes and internals)" }),
+    el("pre", { class: "detail", text: JSON.stringify({ payload: item.payload, events: item.events, raw_sha256: item.raw_sha256 }, null, 2) }),
+  ])
+  view.replaceChildren(
+    el("h3", { text: "text" }),
+    el("pre", { class: "detail", text: item.text || "" }),
+    el("h3", { text: "identity" }),
+    table(["key", "value"], meta),
+    el("h3", { text: "properties" }),
+    properties.length ? table(["name", "value", "reason"], properties) : el("p", { text: "none" }),
+    el("h3", { text: "anatomy" }),
+    anatomyRows.length ? table(["key", "value"], anatomyRows) : el("p", { text: "none" }),
+    el("h3", { text: "versions" }),
+    versions.length ? table(["v", "claim", "current", "supersedes"], versions) : el("p", { text: "none" }),
+    raw,
+  )
+}
+
 async function renderClaims() {
   const query = encodeURIComponent($("claim-query").value.trim())
   const type = encodeURIComponent($("claim-type").value)
   const branch = encodeURIComponent($("claim-branch").value.trim())
   const body = await api(`/api/claims?query=${query}&type=${type}&branch=${branch}&limit=200`)
   const rows = (body.items || []).map((item) => [
+    item.version,
     item.type,
     item.branch,
     item.is_current ? "current" : "retired",
     item.preview,
   ])
-  $("claims-table").replaceChildren(table(["type", "branch", "state", "preview"], rows, async (_row, index) => {
+  $("claims-table").replaceChildren(table(["v", "type", "branch", "state", "preview"], rows, async (_row, index) => {
     const item = body.items[index]
     if (!item) return
     try {
-      showDetail($("claim-detail"), await api(`/api/claim/${item.claim_id}`))
+      showClaimDetail(await api(`/api/claim/${item.claim_id}`))
     } catch (error) {
       showDetail($("claim-detail"), String(error.message || error))
     }
@@ -106,7 +167,16 @@ async function renderClaims() {
 }
 
 async function renderPlan() {
-  showDetail($("plan-view"), await api("/api/plan"))
+  const plan = await api("/api/plan/tree")
+  const lines = []
+  const walk = (tasks, depth = 0) => {
+    for (const task of tasks || []) {
+      lines.push(`${"  ".repeat(depth)}${task.path}  ${task.title}  [${task.branch || "-"}] [${task.status}] claims=${task.claim_count}`)
+      walk(task.children, depth + 1)
+    }
+  }
+  walk(plan.tasks)
+  showDetail($("plan-view"), `revision ${plan.source_revision || "?"} · tasks ${plan.count || 0}\n\n${lines.join("\n")}`)
 }
 
 async function renderHealth() {
