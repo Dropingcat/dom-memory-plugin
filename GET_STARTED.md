@@ -23,7 +23,9 @@ Prerequisites (both hosts):
 
 Do one of the following:
 
-* **Ready archive:** download `dist/claude/dom-memory.plugin` from this repo.
+* **Ready archive:** download `dom-memory.plugin` from
+  [release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)
+  (170 404 B; SHA256 `927bd8914e2888d8bcddb751f75fd824a76e47c391c04b4447c84073cc67c6ba`).
 * **From the tree:** copy the `claude/` folder somewhere on your machine, e.g.
   `C:\tools\dom-memory-plugin\claude`.
 
@@ -50,12 +52,9 @@ Each manifest references the interpreter **portably** as `${DOM_PYTHON:-python}`
 * otherwise set `DOM_PYTHON` to your interpreter (e.g. `C:\Python311\python.exe`)
   **before the app launches**, then restart the session.
 
-To pin an interpreter permanently, rebuild the manifest for your machine:
-
-```bash
-# from the cloned repo, with your interpreter (needs the mcp package):
-python tools/build_plugin.py --target claude --out dist --python C:/Python311/python.exe
-```
+To pin an interpreter permanently, set `DOM_PYTHON` before the app launches or
+edit the interpreter in `.mcp.json` and `hooks/hooks.json`. `tools/build_zip.py`
+only repackages the trees; it does not rewrite the interpreter.
 
 ### A4. Verify
 
@@ -72,7 +71,9 @@ answers `READY`.
 
 Do one of the following:
 
-* **Ready archive:** download `dist/opencode/opencode-dom-memory-<VERSION>.zip`,
+* **Ready archive:** download `opencode-dom-memory-0.2.6.zip` from
+  [release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)
+  (179 665 B; SHA256 `75097314546c175e95a07041d4966d360359ee92d71b1cb637b908349ab9a56b`),
   unzip it anywhere (e.g. `C:\tools\opencode-dom-memory`).
 * **From the tree:** the `opencode/` folder *is* the plugin package — you can point
   at it directly.

@@ -67,6 +67,43 @@ python -m pip install "mcp>=1.30" "anyio>=4.15" "PyYAML>=6.0"
 On the first prompt the memory is created under `<project>/.dom-memory` and the
 request is recorded verbatim as the root claim — no manual init.
 
+## Release 0.2.6 assets
+
+Download from **[GitHub release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)**.
+
+| Asset | Host | Size | SHA256 |
+|---|---|---:|---|
+| `opencode-dom-memory-0.2.6.zip` | OpenCode | 179 665 B | `75097314546c175e95a07041d4966d360359ee92d71b1cb637b908349ab9a56b` |
+| `dom-memory.plugin` | Claude Code | 170 404 B | `927bd8914e2888d8bcddb751f75fd824a76e47c391c04b4447c84073cc67c6ba` |
+
+`B` means bytes, not a version. Both assets are ZIP archives; `dom-memory.plugin`
+is a ZIP whose first entry is `.claude-plugin/plugin.json`, the layout the Claude
+desktop app expects. Sizes differ because the OpenCode archive also ships the
+read-only monitor (`opencode/monitor/`) and `package.json`.
+
+Verify a download:
+
+```powershell
+Get-FileHash .\opencode-dom-memory-0.2.6.zip -Algorithm SHA256
+Get-FileHash .\dom-memory.plugin -Algorithm SHA256
+```
+
+```bash
+sha256sum opencode-dom-memory-0.2.6.zip dom-memory.plugin
+```
+
+Install:
+
+* **OpenCode:** unzip, then point `plugins[].package` at the folder (it contains
+  `package.json`). Full steps: [`GET_STARTED.md`](GET_STARTED.md) Option B.
+* **Claude Code:** install `dom-memory.plugin` via **Settings → Plugins → Install
+  from file** (or `claude plugin install /path/to/dom-memory.plugin`). Full steps:
+  [`GET_STARTED.md`](GET_STARTED.md) Option A.
+* **Monitor:** `python opencode/monitor/server.py --project <project> --port 8765 --print-token`,
+  then open `http://127.0.0.1:8765` and enter the token.
+
+Release notes and known limitations: [`docs/releases/0.2.6-notes.md`](docs/releases/0.2.6-notes.md).
+
 ## Repository layout
 
 ```
