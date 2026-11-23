@@ -168,8 +168,11 @@ export async function register(ctx) {
   const domDir = options.directory ? resolve(options.directory) : null
   const planDir = resolve(options.planDir || join(homedir(), ".opencode", "plan"))
   const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 60_000
-  const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", OPENCODE_PROJECT_DIR: projectDir }
-  if (domDir) env.DOM_RUNTIME_ROOT = resolve(domDir, "..")
+  const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", OPENCODE_PROJECT_DIR: projectDir, DOM_PROJECT_DIR: projectDir }
+  if (domDir) {
+    env.DOM_DIRECTORY = domDir
+    env.DOM_RUNTIME_ROOT = resolve(domDir, "..")
+  }
   if (options.principal) env.DOM_PRINCIPAL = String(options.principal)
   if (options.role) env.DOM_ROLE = String(options.role)
   if (options.checkEvery) env.DOM_CHECK_EVERY = String(options.checkEvery)

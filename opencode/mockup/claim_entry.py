@@ -1764,6 +1764,8 @@ def describe(svc):
                    {'tool': 'dom_claim', 'arguments': {'branch': branches[0] if branches else 'main', 'type': 'text', 'text': '<statement>'}, 'why': 'add a claim'}])
     return {
         'status': 'DESCRIBED', 'profile': profile, 'simulated': svc.context.simulation, 'state': state, 'summary': summary,
+        'directory': str(svc.store.path.parent),
+        'db_path': os.path.realpath(str(svc.store.path)),
         'integrity': integrity,
         # QA004 F-19: the launch policy is visible from the session (it cannot be changed from here)
         'review_policy': {'mode': svc.review_mode, 'launch_mode': svc.launch_review_mode, 'principal': svc.context.principal,

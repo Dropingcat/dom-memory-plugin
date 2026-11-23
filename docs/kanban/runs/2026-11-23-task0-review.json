@@ -1,0 +1,36 @@
+{
+  "block": "TASK0",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": [
+    "opencode/mockup/paths.py",
+    "opencode/scripts/dom_server.py",
+    "opencode/index.js",
+    "opencode/mockup/claim_entry.py",
+    "opencode/mockup/public_dto.py",
+    "claude mirror of the same files",
+    "tests/check_memory_paths.py",
+    "tests/check_memory_preflight.py",
+    "scripts/router/memory_preflight.py",
+    "config/memory_registry.json",
+    "docs/kanban/runs/2026-11-23-task0-memory-paths.md"
+  ],
+  "checks": [
+    {"check": "check_memory_paths.py", "result": "PASS"},
+    {"check": "check_memory_preflight.py", "result": "PASS"},
+    {"check": "check_inbox_status.py", "result": "PASS both trees"},
+    {"check": "check_statement_capture.py", "result": "PASS both trees"},
+    {"check": "check_distillate_pipeline.py", "result": "PASS both trees"},
+    {"check": "check_distillate_audit.py", "result": "PASS both trees"},
+    {"check": "MCP dom_describe probe", "result": "DESCRIBED with directory/db_path"},
+    {"check": "mirror SHA256", "result": "equal for 5 shared files"}
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "text": "Live MCP still runs 0.2.4; directory/db_path will appear only after release/restart.",
+      "action": "release card"
+    }
+  ],
+  "notes": "Self-review by orchestrator because the strict auditor reviewed the plan, not the Task 0 diff. Tests and MCP probe are the evidence; no critical/major findings."
+}

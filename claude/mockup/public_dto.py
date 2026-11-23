@@ -226,6 +226,7 @@ RECORDS.update({
         'review_level': ('opaque',), 'readiness': ('opaque',), 'limits': ('list', 'str'),
         'next_steps': ('list', 'NextStep'),
         'integrity': ('null', 'str'), 'review_policy': ('opaque',),
+        'directory': 'str', 'db_path': 'str',
     },
     'ClaimWritten': {
         'status': 'str', 'simulated': 'bool', 'claim_id': 'str', 'record_id': 'str',
@@ -300,7 +301,7 @@ RECORDS.update({
         'status': 'str', 'simulated': 'bool', 'has_plan': 'bool', 'project_closed': 'bool', 'sources': ('opaque',),
         'items': 'int', 'open_items': 'int', 'iterations_since_change': 'int', 'check_every': 'int',
         'plan_check_due': 'bool', 'request': ('opaque',), 'last_request_at': ('null', 'str'),
-        'inbox_processed': ('opt', 'int'),
+        'inbox_processed': ('opt', 'int'), 'inbox_queued': ('opt', 'int'), 'inbox_failed': ('opt', 'int'),
         'conflicts': ('opt', ('opaque',)),
         'next_steps': ('list', 'NextStep'),
     },

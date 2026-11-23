@@ -20,9 +20,11 @@ def main():
         print('dom-memory: the "mcp" package is missing for %s. Install it: "%s" -m pip install mcp anyio PyYAML'
               % (sys.executable, sys.executable), file=sys.stderr)
         return 3
-    from mockup.paths import plugin_directory
+    from mockup.paths import resolve_paths
     from mockup import server
-    directory = plugin_directory()
+    paths = resolve_paths()
+    os.environ['DOM_RUNTIME_ROOT'] = str(Path(paths.run_dir).parent)
+    directory = Path(paths.run_dir)
     review = os.environ.get('DOM_REVIEW') if os.environ.get('DOM_REVIEW') in ('auto', 'manual', 'independent') else 'auto'
     argv = ['--profile', 'prod', '--directory', str(directory), '--review', review]
     if os.environ.get('DOM_PRINCIPAL'):

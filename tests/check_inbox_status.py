@@ -38,7 +38,9 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from mockup.admission import Service
 from mockup.paths import plugin_directory
-print(json.dumps(Service(plugin_directory(), profile='lite').plan_status()))
+from mockup import public_dto
+raw = Service(plugin_directory(), profile='lite').plan_status()
+print(json.dumps(public_dto.project_tool('dom_plan_status', raw, profile='lite')))
 """
 
 
