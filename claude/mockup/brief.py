@@ -10,7 +10,7 @@ from __future__ import annotations
 from . import planning
 from .admission import verify_chain
 
-MAX_CHARS = 2600
+MAX_CHARS = 3400
 RISK_WORDS = ('risk', 'blocker', 'аналит', 'analysis', 'decision', 'риск', 'блокер')
 
 
@@ -81,20 +81,34 @@ def project_brief(svc, max_chars=MAX_CHARS):
         root_id = root_row[0] if root_row else None
         root_text = planning._claim_text(c, root_id) if root_id else None
         root_props = planning._properties(c, root_id) if root_id else {}
+        main_task = root_props.get('main_task') or root_text or 'not recorded'
+        main_meaning = root_props.get('main_task_meaning') or 'not recorded'
+        root_gits = root_props.get('gits')
+        root_tools = root_props.get('tools')
         explicit = root_props.get('current_task')
         explicit_active = False
         if explicit:
             found = planning.resolve_task(c, explicit)
+            if found is not None:
+                found = dict(found)
             if found and not found.get('archived') and found.get('plan_task_id') in by_id:
                 current = by_id[found['plan_task_id']]
                 explicit_active = True
+                lineage = []
+                cursor = current
+                while cursor is not None:
+                    lineage.append(cursor)
+                    cursor = by_id.get(cursor.get('parent_id'))
+                lineage.reverse()
 
         lines = [
             '[DOM MEMORY INDEX] plan %s · %d items / %d open · %d claims · %s' % (
                 revision or '?', len(rows), sum(1 for row in rows if row.get('status') not in ('done', 'cancelled')),
                 total_claims, integrity,
             ),
-            'ROOT: %s (%s)' % (_short(root_text, 240) if root_text else 'not recorded', (root_id or '?')[:8]),
+            'MAIN TASK: %s — %s (root %s)' % (_short(main_task, 140), _short(main_meaning, 240), (root_id or '?')[:8]),
+            'ROOT REQUEST: %s (%s)' % (_short(root_text, 180) if root_text else 'not recorded', (root_id or '?')[:8]),
+            'GRANDLINE: %s (plan %s)' % (_short(main_task, 140), revision or '?'),
             'LINE:',
         ]
         anchors = []
@@ -113,6 +127,9 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'pinned by current_task=%s' % explicit if explicit_active
             else 'not marked; set current_task on the root claim to pin the active block'
         ))
+        lines.append('CURRENT MEANING: %s' % _short(props.get('meaning') or 'not recorded', 240))
+        lines.append('WHY: %s' % _short(props.get('why') or 'not recorded', 240))
+        lines.append('NOW: %s' % _short(props.get('now') or 'not recorded', 240))
         siblings = children.get(current.get('parent_id'), [])
         done = [row for row in siblings if row.get('status') == 'done']
         planned = [row for row in siblings if row is not current and row.get('status') not in ('done', 'cancelled')]
@@ -144,11 +161,14 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'ORDER BY cl.rowid DESC LIMIT 3'
         ):
             recent.append('%s %s: %s' % (row['content_type'], row['id'][:8], _short(planning._claim_text(c, row['id']), 140)))
-        lines.append('RECENT MAIN: %s' % ('; '.join(recent) if recent else 'none'))
+        lines.append('RECENT STATEMENTS: %s' % ('; '.join(recent) if recent else 'none'))
         lines.append('ANCHORS: root %s; plan %s; headers %s' % (
             (root_id or '?')[:8], revision or '?', ', '.join(value[:8] for value in anchors),
         ))
-        lines.append('VECTOR: read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status')
+        lines.append('VECTOR: %s' % _short(props.get('vector') or 'read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status', 260))
+        lines.append('BOUNDARIES: %s' % _short(props.get('boundaries') or 'not recorded', 240))
+        lines.append('TOOLS: %s' % _short(props.get('tools') or root_tools or 'not recorded', 240))
+        lines.append('GITS: %s' % _short(props.get('gits') or root_gits or 'not recorded', 240))
         lines.append('CHECKLIST:')
         for item in (
             'hold root/branch/current baselines before acting',

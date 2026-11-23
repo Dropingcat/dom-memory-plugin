@@ -52,10 +52,18 @@ def main() -> int:
         assert "[DOM MEMORY INDEX]" in result.stdout, result.stdout
         assert "plan r1" in result.stdout, result.stdout
         assert "claims" in result.stdout, result.stdout
-        assert "ROOT:" in result.stdout, result.stdout
+        assert "ROOT:" in result.stdout or "ROOT REQUEST:" in result.stdout, result.stdout
+        assert "MAIN TASK:" in result.stdout, result.stdout
+        assert "GRANDLINE:" in result.stdout, result.stdout
         assert "LINE:" in result.stdout, result.stdout
         assert "CURRENT" in result.stdout, result.stdout
         assert "ACTIVE:" in result.stdout, result.stdout
+        assert "CURRENT MEANING:" in result.stdout, result.stdout
+        assert "WHY:" in result.stdout, result.stdout
+        assert "NOW:" in result.stdout, result.stdout
+        assert "TOOLS:" in result.stdout, result.stdout
+        assert "GITS:" in result.stdout, result.stdout
+        assert "RECENT STATEMENTS:" in result.stdout, result.stdout
         assert "CHECKLIST:" in result.stdout, result.stdout
     print("PASS dom_index_injection: root/line/current/checklist brief printed when no check is due")
     return 0
