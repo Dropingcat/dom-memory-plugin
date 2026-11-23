@@ -1,0 +1,25 @@
+{
+  "block": "TASK2",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": [
+    "opencode/observability.js",
+    "opencode/index.js",
+    "claude/opencode-plugin/observability.js",
+    "claude/opencode-plugin/index.js",
+    "tests/check_prompt_snapshot.mjs"
+  ],
+  "checks": [
+    {"check": "node --test tests/check_prompt_snapshot.mjs", "result": "3 pass / 0 fail"},
+    {"check": "node --test tests/check_observability.mjs", "result": "3 pass / 0 fail"},
+    {"check": "mirror SHA256 index.js/observability.js", "result": "equal"}
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "text": "hook_order stays unknown; a plugin registered after DOM is not captured.",
+      "action": "documented in evidence; proves exact final prompt only after runtime order is verified"
+    }
+  ],
+  "notes": "Self-review by orchestrator. Snapshot is DOM-position pre-lowering, not the provider request body."
+}

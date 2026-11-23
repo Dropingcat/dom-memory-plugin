@@ -324,6 +324,7 @@ export async function register(ctx) {
         if (!Array.isArray(event.system)) event.system = []
         event.system.push({ type: "text", text: injectedText })
       }
+      const snapshot = observability.snapshot(event, { source: "dom.context", notes })
       observability.record({
         hook: "context",
         phase: "after",
@@ -335,6 +336,7 @@ export async function register(ctx) {
         injected: notes.length
           ? { notes: notes.length, chars: injectedText.length, sha256: sha256(injectedText), preview: preview(injectedText) }
           : null,
+        snapshot: snapshot ? { id: snapshot.id, sha256_full: snapshot.sha256_full, truncated: snapshot.truncated, path: snapshot.path } : null,
         context: {
           system_blocks_before: systemBefore,
           system_blocks_after: Array.isArray(event.system) ? event.system.length : systemBefore,

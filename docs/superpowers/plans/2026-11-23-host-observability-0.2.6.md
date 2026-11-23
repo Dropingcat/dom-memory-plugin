@@ -144,6 +144,8 @@ Run: `node --test tests/check_observability.mjs` and the Python wrapper. Expecte
 
 ### Task 2: DOM-position pre-lowering snapshot
 
+**Status: DONE (2026-11-23).** Evidence: `docs/kanban/runs/2026-11-23-task2-snapshot.md`. `node --test tests/check_prompt_snapshot.mjs` → 3/3 pass; hash recomputed in test; mirror SHA256 equal.
+
 **Files:**
 - Modify: `opencode/observability.js`, `opencode/index.js`
 - Test: `tests/check_prompt_snapshot.mjs`
