@@ -1,0 +1,34 @@
+{
+  "block": "TASK3-4",
+  "date": "2026-11-23",
+  "verdict": "APPROVE",
+  "scope": [
+    "opencode/monitor/server.py",
+    "opencode/monitor/static/index.html",
+    "opencode/monitor/static/app.js",
+    "opencode/monitor/static/style.css",
+    "opencode/mockup/storage.py",
+    "claude/mockup/storage.py",
+    "tests/check_monitor_api.py",
+    "tests/check_monitor_ui.py"
+  ],
+  "checks": [
+    {"check": "python -B tests/check_monitor_api.py", "result": "PASS: health, claims, detail, hooks, snapshots, auth, host, cors, traversal, corrupt"},
+    {"check": "python -B tests/check_monitor_ui.py", "result": "PASS: tabs, CSP, no external assets, textContent only"},
+    {"check": "real probe omh-baseline", "result": "CHAIN_OK, 212 claims, r16, UI 200"},
+    {"check": "mirror storage.py", "result": "SHA256 equal"}
+  ],
+  "findings": [
+    {
+      "severity": "minor",
+      "text": "UI is the portable web panel, not the native OpenCode Panel.",
+      "action": "native Panel adapter is 0.3.1"
+    },
+    {
+      "severity": "nit",
+      "text": "The monitor runs in a daemon thread; tests close it, but Windows can keep a read-only SQLite handle until the request handler returns.",
+      "action": "tests use ignore_cleanup_errors; real use is a long-running server"
+    }
+  ],
+  "notes": "Self-review by orchestrator. API is read-only; no claim/event/plan writes. Token is header-only, not in the URL."
+}

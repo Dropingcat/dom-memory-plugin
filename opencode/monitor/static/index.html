@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DOM monitor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>DOM monitor</h1>
+    <label class="token">
+      <span>Token</span>
+      <input id="token" type="password" autocomplete="off" placeholder="Bearer token">
+    </label>
+    <button id="connect" type="button">Connect</button>
+    <span id="status" class="status" role="status"></span>
+  </header>
+
+  <nav class="tabs" aria-label="Views">
+    <button type="button" data-tab="hooks" class="active">Hooks &amp; injections</button>
+    <button type="button" data-tab="claims">DOM claims</button>
+    <button type="button" data-tab="plan">Plan</button>
+    <button type="button" data-tab="health">Health</button>
+  </nav>
+
+  <main>
+    <section id="hooks" class="view active">
+      <div class="row">
+        <label>Snapshot <select id="snapshot-select"></select></label>
+        <button id="snapshot-refresh" type="button">Refresh</button>
+      </div>
+      <div class="split">
+        <div class="pane">
+          <h2>Journal</h2>
+          <div id="hooks-table" class="table"></div>
+        </div>
+        <div class="pane">
+          <h2>Detail</h2>
+          <pre id="hook-detail" class="detail"></pre>
+          <h2>Prompt snapshot</h2>
+          <div id="snapshot-view" class="detail"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="claims" class="view">
+      <div class="row">
+        <input id="claim-query" type="search" placeholder="Search claims">
+        <select id="claim-type">
+          <option value="">Any type</option>
+          <option>decision</option><option>text</option><option>quote</option>
+          <option>code</option><option>data</option><option>formula</option><option>concept</option>
+        </select>
+        <input id="claim-branch" type="text" placeholder="Branch">
+        <button id="claim-search" type="button">Search</button>
+      </div>
+      <div class="split">
+        <div class="pane">
+          <h2>Claims</h2>
+          <div id="claims-table" class="table"></div>
+        </div>
+        <div class="pane">
+          <h2>Claim</h2>
+          <pre id="claim-detail" class="detail"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="plan" class="view">
+      <h2>Plan</h2>
+      <pre id="plan-view" class="detail"></pre>
+    </section>
+
+    <section id="health" class="view">
+      <h2>Health</h2>
+      <div id="health-view" class="table"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

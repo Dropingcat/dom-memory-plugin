@@ -1,0 +1,77 @@
+:root {
+  color-scheme: light dark;
+  --bg: #101418;
+  --panel: #171d23;
+  --line: #2b343d;
+  --text: #dce3ea;
+  --muted: #91a0ae;
+  --accent: #6fb3ff;
+  --bad: #ff7b7b;
+  --ok: #7ddc9a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.bar, .tabs, main { padding: 12px 16px; }
+
+.bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { font-size: 16px; margin: 0 12px 0 0; }
+h2 { font-size: 13px; color: var(--muted); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+
+.token { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+input, select, button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.active { border-color: var(--accent); color: var(--accent); }
+
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.view { display: none; }
+.view.active { display: block; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.split { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+.pane { min-width: 0; }
+.table { border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 62vh; }
+.table table { border-collapse: collapse; width: 100%; }
+.table th, .table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+.table tr { cursor: pointer; }
+.table tr:hover { background: #1d252d; }
+
+.detail {
+  margin: 0;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: 62vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.status { color: var(--muted); }
+.status.bad { color: var(--bad); }
+.status.ok { color: var(--ok); }

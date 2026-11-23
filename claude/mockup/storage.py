@@ -202,7 +202,7 @@ FROM events;
 BUSY_TIMEOUT_MS=10000
 
 class Store:
-    def __init__(self,directory): self.path=Path(directory)/'dom.sqlite3'
+    def __init__(self,directory,read_only=False): self.path=Path(directory)/'dom.sqlite3'; self.read_only=read_only
     def connect(self):
         if getattr(self,'read_only',False):
             c=sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True,timeout=BUSY_TIMEOUT_MS/1000,isolation_level=None)

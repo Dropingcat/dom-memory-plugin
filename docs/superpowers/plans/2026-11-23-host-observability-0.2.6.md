@@ -201,6 +201,8 @@ Run `node --test tests/check_prompt_snapshot.mjs`; one real prompt; confirm JSON
 
 ### Task 3: Monitor API
 
+**Status: DONE (2026-11-23).** Evidence: `docs/kanban/runs/2026-11-23-task3-4-monitor.md`. `python -B tests/check_monitor_api.py` → PASS; real probe `CHAIN_OK`, 212 claims, r16.
+
 **Files:**
 - Create: `opencode/monitor/server.py`, `opencode/monitor/__init__.py`
 - Test: `tests/check_monitor_api.py`
@@ -227,6 +229,8 @@ Verify that `Store` accepts `read_only=True` or add the constructor parameter; u
 ---
 
 ### Task 4: Monitor UI
+
+**Status: DONE (2026-11-23).** Evidence: `docs/kanban/runs/2026-11-23-task3-4-monitor.md`. `python -B tests/check_monitor_ui.py` → PASS; real probe UI 200 with tabs.
 
 **Files:**
 - Create: `opencode/monitor/static/index.html`, `app.js`, `style.css`
