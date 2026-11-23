@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -8,13 +8,6 @@ import { register } from "../opencode/index.js"
 import { canonicalJson, createObservability, sha256 } from "../opencode/observability.js"
 
 const PY = "E:\\opencode_harness_portable\\.venv\\Scripts\\python.exe"
-
-function snapshotFile(dir, session = "s1") {
-  const root = join(dir, ".dom-memory", "observability", "prompts", session)
-  const names = readdirSync(root).filter((name) => name.endsWith(".json"))
-  assert.ok(names.length > 0, `no snapshot in ${root}`)
-  return join(root, names.sort().at(-1))
-}
 
 test("snapshot stores blocks, redacts secrets, and hashes the full semantic input", () => {
   const dir = mkdtempSync(join(tmpdir(), "dom-snap-"))
@@ -97,12 +90,16 @@ test("context hook writes a snapshot through the registered handler", async () =
     options: {},
   }
   await handlers.context(event)
-  const file = snapshotFile(dir, "ses_snap")
-  assert.ok(existsSync(file))
-  const snap = JSON.parse(readFileSync(file, "utf8"))
-  assert.equal(snap.schema, "dom.prompt-snapshot/2")
-  assert.equal(snap.session_id, "ses_snap")
-  assert.ok(snap.counts.system_blocks >= 1)
-  assert.ok(snap.dom.notes.length >= 1, "expected the queued DOM note in the snapshot")
+  await handlers.context({ ...event, system: [{ type: "text", text: "base2" }] })
+  const root = join(dir, ".dom-memory", "observability", "prompts", "ses_snap")
+  const files = readdirSync(root).filter((name) => name.endsWith(".json")).sort()
+  assert.ok(files.length >= 2, files)
+  for (const name of files) {
+    const snap = JSON.parse(readFileSync(join(root, name), "utf8"))
+    assert.equal(snap.schema, "dom.prompt-snapshot/2")
+    assert.equal(snap.session_id, "ses_snap")
+    assert.ok(snap.counts.system_blocks >= 1)
+    assert.ok(snap.dom.notes.length >= 1, `expected the DOM brief in ${name}`)
+  }
   cleanup()
 })

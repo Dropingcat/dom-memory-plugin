@@ -200,6 +200,7 @@ export async function register(ctx) {
 
   const pending = new Map()
   const planDigests = new Map() // sessionID -> sha256 of the last plan file this session consumed
+  const briefs = new Map() // sessionID -> last DOM brief from the prompt hook, reused on tool continuations
 
   const queue = (sessionID, text) => {
     if (!text) return
@@ -263,6 +264,8 @@ export async function register(ctx) {
       let error = null
       try {
         note = planCheck(event?.prompt?.text ?? "", sessionID)
+        if (note) briefs.set(sessionID || "", note)
+        else briefs.delete(sessionID || "")
         queue(sessionID, note)
       } catch (caught) {
         error = caught instanceof Error ? caught.message : String(caught)
@@ -296,6 +299,9 @@ export async function register(ctx) {
       if (queued?.length) {
         notes.push(...queued)
         pending.delete(sessionID)
+      }
+      if (!notes.length && briefs.has(sessionID || "")) {
+        notes.push(briefs.get(sessionID || ""))
       }
       try {
         if (String(event?.agent ?? "") !== PLAN_AGENT) {
