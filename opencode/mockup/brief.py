@@ -7,7 +7,7 @@ vector and a short checklist.  It never invents a relationship.
 """
 from __future__ import annotations
 
-from . import planning
+from . import planning, promptizer
 from .admission import verify_chain
 
 MAX_CHARS = 3400
@@ -127,9 +127,9 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'pinned by current_task=%s' % explicit if explicit_active
             else 'not marked; set current_task on the root claim to pin the active block'
         ))
-        lines.append('CURRENT MEANING: %s' % _short(props.get('meaning') or 'not recorded', 240))
-        lines.append('WHY: %s' % _short(props.get('why') or 'not recorded', 240))
-        lines.append('NOW: %s' % _short(props.get('now') or 'not recorded', 240))
+        lines.append('CURRENT MEANING: %s' % promptizer.render(c, 'current_meaning', props, current['plan_task_id'], props.get('context')))
+        lines.append('WHY: %s' % promptizer.render(c, 'why', props, current['plan_task_id'], props.get('context')))
+        lines.append('NOW: %s' % promptizer.render(c, 'now', props, current['plan_task_id'], props.get('context')))
         ids = [row['plan_task_id'] for row in lineage]
         placeholders = ','.join('?' * len(ids))
         risks = []
@@ -200,10 +200,11 @@ def project_brief(svc, max_chars=MAX_CHARS):
         lines.append('ANCHORS: root %s; plan %s; headers %s' % (
             (root_id or '?')[:8], revision or '?', ', '.join(value[:8] for value in anchors),
         ))
-        lines.append('VECTOR: %s' % _short(props.get('vector') or 'read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status', 260))
-        lines.append('BOUNDARIES: %s' % _short(props.get('boundaries') or 'not recorded', 240))
-        lines.append('TOOLS: %s' % _short(props.get('tools') or root_tools or 'not recorded', 240))
-        lines.append('GITS: %s' % _short(props.get('gits') or root_gits or 'not recorded', 240))
+        vector = promptizer.render(c, 'vector', props, current['plan_task_id'], props.get('context'), default='')
+        lines.append('VECTOR: %s' % (vector or 'read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status'))
+        lines.append('BOUNDARIES: %s' % promptizer.render(c, 'boundaries', props, current['plan_task_id'], props.get('context')))
+        lines.append('TOOLS: %s' % promptizer.render(c, 'tools', props if props.get('tools') else root_props, current['plan_task_id'], props.get('context')))
+        lines.append('GITS: %s' % promptizer.render(c, 'gits', props if props.get('gits') else root_props, current['plan_task_id'], props.get('context')))
         lines.append('CHECKLIST:')
         checklist = [
             'hold root/branch/current baselines before acting',

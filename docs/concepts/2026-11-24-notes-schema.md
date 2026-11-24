@@ -119,7 +119,16 @@ Example from the live plan (`П1.1`): each linked code/data/text claim has a `re
 
 ## Distillate / promptizer
 
-The current generator is deterministic: it fills variables from plan/properties/claims. A later promptizer can choose a per-block mini-prompt and a distilled thesis from `dom_distillate`, but it must keep the same block names and the pointer rule.
+`mockup/promptizer.py` implements the per-variable promptizer:
+
+- one spec per variable (`prompt`, `limit`, `markers`, fallback `roles`);
+- `mini_prompt(name)` is the mini-prompt an agent follows to curate the value;
+- source order: curated property → plan header context clause (`Текущая задача:`, `Сейчас:`, …) → latest linked work claim → `not recorded`;
+- `distill()` keeps a short value verbatim and cuts a long one on a sentence boundary, preferring the sentence that carries the variable's marker;
+- anchors stay on the claim: the brief carries the thesis and the claim id, the full text is read with `dom_context`/`dom_distillate`.
+
+The runtime never calls a model. V0 prefers the curated property and then the plan context; reading a `dom_distillate` chain as a source is a later step (there are no distillates in the live ledger yet).
+
 
 ## Example
 
