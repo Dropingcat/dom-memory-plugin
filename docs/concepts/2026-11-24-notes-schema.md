@@ -64,10 +64,11 @@ Each item is an action with an anchor (claim id or plan path); the maximum is ni
 
 `NEXT` is ordered, not a bag:
 
-1. open siblings/children of the current task, in plan order;
-2. missing graph links (`implements`, `validates`);
-3. open conflicts;
-4. linked risks.
+1. open children of the current task, in plan order;
+2. open siblings, in plan order;
+3. missing graph links (`implements`, `validates`);
+4. open conflicts;
+5. linked risks.
 
 Limit: four steps. Each step names a path or a concrete graph action. This is the sub-block that catches the “remnants” planning missed: if the plan has open items or the graph has a missing role, they become next steps instead of disappearing.
 

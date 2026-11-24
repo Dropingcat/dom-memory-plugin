@@ -164,8 +164,8 @@ def project_brief(svc, max_chars=MAX_CHARS):
         conflicts = planning.open_conflicts(c)
         siblings = children.get(current.get('parent_id'), [])
         done = [row for row in siblings if row.get('status') == 'done']
-        planned = [row for row in siblings if row is not current and row.get('status') not in ('done', 'cancelled')]
-        planned += [row for row in children.get(current['plan_task_id'], []) if row.get('status') not in ('done', 'cancelled')]
+        planned = [row for row in children.get(current['plan_task_id'], []) if row.get('status') not in ('done', 'cancelled')]
+        planned += [row for row in siblings if row is not current and row.get('status') not in ('done', 'cancelled')]
         lines.append('DONE: %d done in the current branch' % len(done))
         next_steps = []
         for row in planned[:4]:

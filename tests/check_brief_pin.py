@@ -39,6 +39,7 @@ def main() -> int:
             text = project_brief(svc)
             assert "ACTIVE: pinned by current_task=П2" in text, text
             assert "CURRENT: П2 " in text, text
+            assert "1) П2.1 Open child" in text, text
         finally:
             if previous is None:
                 os.environ.pop("DOM_RUNTIME_ROOT", None)

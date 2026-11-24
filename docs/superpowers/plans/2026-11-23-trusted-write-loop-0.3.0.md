@@ -1,8 +1,23 @@
 # Trusted Write Loop 0.3.0 — Tech Cards
 
-**Status:** roadmap; not started. Depends on Observability 0.2.6.
+**Status:** started 2026-11-24; plan r20 adds П15 «0.3.0 Trusted write loop» with П15.1–П15.8 on branches AO–AO800; `current_task=П15` pinned. L1 (WriteContext and writer inventory) is the first step.
 **Goal:** Make every write carry a trusted `WriteContext`, make reads produce DB receipts, and gate agent writes on `dom_find` + `basis`.
 **Why separate:** Revision 2 of 0.2.6 was rejected because it mixed observability with a schema/transaction rewrite. This file isolates that work.
+
+## Plan binding
+
+| Plan path | Branch | Card |
+|---|---|---|
+| П15.1 | AO100 | L1 WriteContext and the writer inventory |
+| П15.2 | AO200 | L2 V5 migration: claim_sessions and read_receipts |
+| П15.3 | AO300 | L3 same-transaction receipts |
+| П15.4 | AO400 | L4 trusted session channel |
+| П15.5 | AO500 | L5 DB identity |
+| П15.6 | AO600 | L6 gate invariant in Service |
+| П15.7 | AO700 | L7 plugin UX gate |
+| П15.8 | AO800 | L8 reviewer attribution |
+
+Header contexts carry the card text, so the brief LINE shows each card's baseline.
 
 ## Global Constraints
 
