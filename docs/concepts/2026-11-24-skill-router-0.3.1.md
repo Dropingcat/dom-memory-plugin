@@ -216,6 +216,17 @@ reach. The queue therefore stays additive: `dom.notes` + `dom.skill-queue` + out
 Shrinking the catalog is a 0.4 item that needs a core-level skill filter. See
 `docs/concepts/2026-11-24-prompt-block-layout.md` → "E4 result".
 
+### Decision 9 — the dashboard profile is an option, not the default
+
+E6 measured: `permissions: deny *` plus `allow dom-dashboard` leaves one catalog entry (69 276 → 575
+chars), and a marker in that entry can be replaced per request with the live queue (proven by
+substitution in `core/skill-guidance`). But `deny` also rejects loading, so the dashboard must carry
+the skill bodies it wants to use (bounded, tail-placed), or the agent profile must allow ids
+explicitly. The variant therefore ships as a dedicated agent profile:
+`agents.dom-router.permissions = deny * + allow dom-dashboard`, queue and bodies injected into the
+dashboard text, never a global switch. The default 0.3.1 path stays the instruction-entry queue.
+
+
 ## Still open
 
 1. Skill id stability: does a rename keep `Skill.ID`, and is there a version per skill content?

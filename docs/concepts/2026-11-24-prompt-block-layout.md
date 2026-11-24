@@ -186,6 +186,39 @@ Consequence for 0.3.1: stay safe. Queue entry (ids + digests), outcomes, weights
 level-wide transform, no attempt to filter the catalog. Shrinking `core/skill-guidance` becomes a
 0.4 item that needs a core-level skill filter (or a supported transform for the full registry).
 
+## E6 result (2026-11-24) — dashboard skill, permissions, marker injection
+
+Tested the user's proposal: hide nearly all skills, keep one dashboard skill, inject the queue into it.
+
+| Step | Context | `core/skill-guidance` | Skills in catalog | Marker |
+|---|---|---|---|---|
+| baseline | fresh session | 69 276 | 166 | — |
+| `permissions: deny *`, `allow dom-dashboard` | fresh session | **575** | **1** | present |
+| same request, context hook replaces the marker | fresh session | 575 | 1 | `E6-INJECTED …` |
+
+Findings:
+
+1. **Permissions are the clean lever.** One rule pair in `.opencode/opencode.json` hides 165 skills and
+   keeps one: the block drops 69 276 → 575 (−99.2%), measured on a fresh session, no file moves.
+2. **Arbitrary-region substitution works.** A `context` hook replaced `E6-MARKER` inside the
+   `core/skill-guidance` part text with a queue string; the captured request shows `E6-INJECTED` and no
+   marker. The core text is mutable per request.
+3. **`deny` also rejects loading.** The dashboard can list ids, but the model cannot load a denied
+   skill. A queue of ids is therefore not enough: either inject the bodies into the dashboard text,
+   or allow per step/agent (`agents.<id>.permissions`, last match wins).
+4. **Placement has a cache cost.** The catalog is part 2, early in the prompt; changing it invalidates
+   the cached prefix. Injection into the tail (new system part or instruction entry) is cheaper. Use
+   the catalog marker only for content that changes rarely.
+5. **Scope it per agent.** A global `deny *` removes tools the user needs for unrelated work; the
+   router profile should carry its own permissions, leaving the default agent untouched.
+6. **Restore is clean.** Removing the config, plugin and skill returns the registry to 166 and the
+   catalog to baseline.
+
+Verdict: the dashboard variant is **viable**, but it is a separate agent profile, not a global switch.
+For 0.3.1 the instruction-entry queue stays the default; the dashboard becomes the 0.3.1 option for
+an agent that must not see the catalog at all, with bodies injected into the dashboard rather than
+loaded by id.
+
 ## Experiments before enabling by default
 
 | # | Question | Measure | Pass |
@@ -195,6 +228,7 @@ level-wide transform, no attempt to filter the catalog. Shrinking `core/skill-gu
 | E3 | Is the queue entry under 800 chars at 4 skills? | length + readability | ≤ 800 |
 | E4 | Does `ctx.skill.transform` removal actually shrink `core/skill-guidance`? | part 2c chars before/after | **fail** for the 69k catalog — see the E4 result; only 17 plugin-visible skills |
 | E5 | Does `delete event.tools[x]` reduce the tools map? | tools chars per request | −20% |
+| E6 | Can permissions + one dashboard skill replace the catalog, and can a marker be substituted in it? | part 2c chars, marker present, load behaviour | **pass** for size/injection; load requires per-agent allow or body injection |
 
 E1–E3 belong to П16.3. E4–E5 are 0.4 candidates.
 
