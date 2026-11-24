@@ -730,6 +730,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-24 | — | — | — | plan r19: П14.5 and П14 `done` (node fully closed); live snapshot 03:49 notes=1 with `SOURCES`, 2939 chars; brief falls back to auto when `current_task` is done and says “pin the next block”; prompt budget measured (86% skills catalog, DOM tools 842 chars) | orchestrator |
 | 2026-11-24 | — | — | — | plan r20: new П15 «0.3.0 Trusted write loop» + П15.1–П15.8 (AO…AO800) with header contexts; `current_task=П15` pinned; `NEXT` prefers open children of the current block (П15.1–П15.4 shown) | orchestrator |
 | 2026-11-24 | — | — | — | plan r21: П16 «0.3.1 Panel and skill routing» + П16.1 Native Panel, П16.2 Skill router concept (AP, AP100, AP200); concept doc `docs/concepts/2026-11-24-skill-router-0.3.1.md` (Б1–Б7, four layers, KPI, risks, open decisions); claims `0bfeeeab` (doc) + `2103ac97` (decision) | orchestrator |
+| 2026-11-24 | — | — | — | plan r22: П16.3 Queue channel spike (AP300); 0.3.1 channel decision — queue is a keyed `dom.skill-queue` instruction entry announced at the next step boundary, `dom.notes` stays the plan brief; registry `ctx.skill.list()`, weights `ctx.storage` + ledger snapshots, gate/queue_miss via `tool.hook` | orchestrator |
 
 ### 17.1. Метрики доски
 
