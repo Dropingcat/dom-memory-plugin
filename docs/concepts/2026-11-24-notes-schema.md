@@ -107,6 +107,7 @@ Example from the live plan (`П1.1`): each linked code/data/text claim has a `re
 - A missing value is printed as `not recorded`; the generator never invents it.
 - Each baseline is the header claim's `context` property, shortened to fit.
 - `CURRENT` is `CURRENT (auto)` when `current_task` is missing; the agent is told to pin it.
+- When `current_task` points to a `done`/`cancelled` block, the brief falls back to the auto pick and says `current_task=X is done; pin the next block` instead of presenting a closed block as active.
 - `RECENT STATEMENTS` includes the claim type, short id and a preview; the full source/distillate is read with `dom_context`/`dom_distillate`.
 - The whole note is capped at 3,400 characters.
 

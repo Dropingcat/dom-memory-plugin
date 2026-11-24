@@ -727,6 +727,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-24 | — | — | — | notes v2: `NEXT` ordered (plan → missing graph links → conflicts → risks), `RISK CHECKS`, conflict paths, dynamic checklist, `GRAPH` roles; P14.2 linked implements+validates (4 work claims); schema/process doc updated | orchestrator |
 | 2026-11-24 | — | — | — | P14.3/P14.4: `mockup/promptizer.py` (per-variable specs, mini-prompts, sentence distillation, source order property→context→claim→not recorded); brief `SOURCES` line (plan/root/property/context/claim anchors); note fits 3400 chars without truncating the checklist | orchestrator |
 | 2026-11-24 | — | — | — | plan r18: П14.1–П14.4 `done` (73 items, 56 open); `current_task=П14.5` pinned; П14.5 header properties meaning/why/now/vector/boundaries/tools/gits; claims П14.3 `a12cd3cc`+`3aba41e6`, П14.4 `221a724f`+`9ccfd5e8` (implements+validates) | orchestrator |
+| 2026-11-24 | — | — | — | plan r19: П14.5 and П14 `done` (node fully closed); live snapshot 03:49 notes=1 with `SOURCES`, 2939 chars; brief falls back to auto when `current_task` is done and says “pin the next block”; prompt budget measured (86% skills catalog, DOM tools 842 chars) | orchestrator |
 
 ### 17.1. Метрики доски
 

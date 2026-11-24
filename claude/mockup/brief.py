@@ -93,19 +93,24 @@ def project_brief(svc, max_chars=MAX_CHARS):
         root_tools = root_props.get('tools')
         explicit = root_props.get('current_task')
         explicit_active = False
+        pinned_done = None
         if explicit:
             found = planning.resolve_task(c, explicit)
             if found is not None:
                 found = dict(found)
             if found and not found.get('archived') and found.get('plan_task_id') in by_id:
-                current = by_id[found['plan_task_id']]
-                explicit_active = True
-                lineage = []
-                cursor = current
-                while cursor is not None:
-                    lineage.append(cursor)
-                    cursor = by_id.get(cursor.get('parent_id'))
-                lineage.reverse()
+                candidate = by_id[found['plan_task_id']]
+                if candidate.get('status') in ('done', 'cancelled'):
+                    pinned_done = candidate['path']
+                else:
+                    current = candidate
+                    explicit_active = True
+                    lineage = []
+                    cursor = current
+                    while cursor is not None:
+                        lineage.append(cursor)
+                        cursor = by_id.get(cursor.get('parent_id'))
+                    lineage.reverse()
 
         lines = [
             '[DOM MEMORY INDEX] plan %s · %d items / %d open · %d claims · %s' % (
@@ -131,7 +136,8 @@ def project_brief(svc, max_chars=MAX_CHARS):
         ))
         lines.append('ACTIVE: %s' % (
             'pinned by current_task=%s' % explicit if explicit_active
-            else 'not marked; set current_task on the root claim to pin the active block'
+            else ('current_task=%s is done; pin the next block' % pinned_done if pinned_done
+                  else 'not marked; set current_task on the root claim to pin the active block')
         ))
         sources = ['plan %s' % (revision or '?'), 'root %s' % (root_id or '?')[:8]]
         meaning = promptizer.resolve(c, 'current_meaning', props, current['plan_task_id'], props.get('context'), header or '')
