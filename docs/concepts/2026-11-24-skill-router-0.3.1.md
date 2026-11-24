@@ -207,6 +207,15 @@ claims. It must not scrape instruction entries or snapshots for state.
 uses native skill loading; later steps use the queue entry. Full skill text is never pasted into the
 queue — ids and one-line "when to use" only.
 
+### Decision 8 — no catalog filtering in 0.3.1 (E4 result)
+
+Measured 2026-11-24: one skill costs ~5.8k chars of `core/skill-guidance`, but
+`ctx.skill.transform` sees only 17 skills (bundled + external superpowers) and not the 165
+config-discovered ones; removing a visible skill cuts its entry, the rest of the catalog is out of
+reach. The queue therefore stays additive: `dom.notes` + `dom.skill-queue` + outcomes + weights.
+Shrinking the catalog is a 0.4 item that needs a core-level skill filter. See
+`docs/concepts/2026-11-24-prompt-block-layout.md` → "E4 result".
+
 ## Still open
 
 1. Skill id stability: does a rename keep `Skill.ID`, and is there a version per skill content?

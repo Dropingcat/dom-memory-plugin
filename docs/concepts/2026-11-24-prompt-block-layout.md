@@ -148,6 +148,44 @@ The classifier is deterministic; learning is a weight update plus a gated regist
 All learning writes land in DOM as claims/properties, so a later audit can replay why a skill was
 promoted. Weights in `ctx.storage` are hot state; the ledger snapshot is the truth of record.
 
+## E4 result (2026-11-24) — catalog filtering is not available
+
+Run as a measurement, not an optimisation.
+
+| Step | Context | `core/skill-guidance` | Skills | Probe |
+|---|---|---|---|---|
+| baseline | desktop session | 69 276 | 166 | no |
+| probe added | fresh session | 75 094 | 167 | yes |
+| probe added, `brainstorming` removed | fresh session | 74 770 | 166 | yes |
+| probe and plugin removed, after restart | fresh CLI session | 68 980 | 165 | no |
+
+Findings:
+
+1. **One skill costs ~5.8k chars.** A 6 013-char description moved the block from 69 276 to 75 094
+   (+5 818, ~97% of the description). A long-lived session keeps its old block: the new skill arrives
+   as a delta reminder, not by rebuilding the catalog.
+2. **`ctx.skill.transform` cannot see the config skills.** `ctx.skill.list()` returns 17 skills
+   (bundled `opencode`, `report`, and the external superpowers set) at every location; the 165
+   config-discovered skills, including the probe, are outside its view. A `location` argument does
+   not change the count.
+3. **The transform works only inside that 17.** Removing `brainstorming` (visible) cut the catalog by
+   324 chars (75 094 → 74 770), dropped the registry 17 → 16, and the live session was told the skill
+   is unavailable. The probe could not be removed because it is not in scope.
+4. **Restore is clean.** Deleting the plugin left the registration active until the service restart;
+   after the restart a fresh session is back to 68 980 and the registry to 166 (`brainstorming`
+   present, probe gone).
+
+Caveats: CLI sessions omit the `browser` skill (−296 vs a desktop session), so only same-context
+runs are comparable; provider cache/cost was not measured (needs usage capture, not request text).
+
+**Verdict: E4 fails for the 69k catalog.** The block is core-owned and the plugin API cannot address
+its 165 config skills. `ctx.skill.transform` is a registry tool for the plugin-visible set, not a
+per-plan filter.
+
+Consequence for 0.3.1: stay safe. Queue entry (ids + digests), outcomes, weights, panel. No
+level-wide transform, no attempt to filter the catalog. Shrinking `core/skill-guidance` becomes a
+0.4 item that needs a core-level skill filter (or a supported transform for the full registry).
+
 ## Experiments before enabling by default
 
 | # | Question | Measure | Pass |
@@ -155,7 +193,7 @@ promoted. Weights in `ctx.storage` are hot state; the ledger snapshot is the tru
 | E1 | Does `instructions.entry` render at the next step boundary? | entry visible in the next request, removed after | yes/no |
 | E2 | Does per-step replacement break provider caching? | two sequential calls with/without replacement | cost delta < 10% |
 | E3 | Is the queue entry under 800 chars at 4 skills? | length + readability | ≤ 800 |
-| E4 | Does `ctx.skill.transform` removal actually shrink `core/skill-guidance`? | part 2c chars before/after | −50% |
+| E4 | Does `ctx.skill.transform` removal actually shrink `core/skill-guidance`? | part 2c chars before/after | **fail** for the 69k catalog — see the E4 result; only 17 plugin-visible skills |
 | E5 | Does `delete event.tools[x]` reduce the tools map? | tools chars per request | −20% |
 
 E1–E3 belong to П16.3. E4–E5 are 0.4 candidates.

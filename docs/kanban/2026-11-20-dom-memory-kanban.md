@@ -732,6 +732,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-24 | — | — | — | plan r21: П16 «0.3.1 Panel and skill routing» + П16.1 Native Panel, П16.2 Skill router concept (AP, AP100, AP200); concept doc `docs/concepts/2026-11-24-skill-router-0.3.1.md` (Б1–Б7, four layers, KPI, risks, open decisions); claims `0bfeeeab` (doc) + `2103ac97` (decision) | orchestrator |
 | 2026-11-24 | — | — | — | plan r22: П16.3 Queue channel spike (AP300); 0.3.1 channel decision — queue is a keyed `dom.skill-queue` instruction entry announced at the next step boundary, `dom.notes` stays the plan brief; registry `ctx.skill.list()`, weights `ctx.storage` + ledger snapshots, gate/queue_miss via `tool.hook` | orchestrator |
 | 2026-11-24 | — | — | — | prompt map from a live snapshot: system 86 361 = 80.2% `core/skill-guidance` (69 276), `core/codemode` 8 901, dom 2 774, harness 2 000; tools 13 055, messages 9 577; layout doc `docs/concepts/2026-11-24-prompt-block-layout.md` (placement rules, sensing contract, intensity table, learning loop, experiments E1–E5) | orchestrator |
+| 2026-11-24 | — | — | — | E4 measured: +6 013-char probe skill → catalog 69 276 → 75 094 (+5 818); `ctx.skill.list()` sees only 17 skills (bundled+superpowers), not the 165 config ones; removing `brainstorming` cut 324 chars (75 094 → 74 770); probe not removable; restore 68 980 after restart. E4 fails for the 69k catalog → 0.3.1 stays additive (queue entry, outcomes, weights), catalog shrink moves to 0.4 | orchestrator |
 
 ### 17.1. Метрики доски
 
