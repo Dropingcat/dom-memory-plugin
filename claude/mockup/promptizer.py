@@ -132,10 +132,10 @@ def clause(context, markers):
     return ''
 
 
-def linked_claim_text(c, task_id, roles, limit):
-    """First sentence of the latest linked work claim, or ''."""
+def linked_claim(c, task_id, roles, limit):
+    """Latest linked work claim as (text, claim_id), or ('', '')."""
     if not roles:
-        return ''
+        return '', ''
     placeholders = ','.join('?' * len(roles))
     row = c.execute(
         'SELECT cl.id FROM task_claims tc JOIN claims cl ON cl.id=tc.claim_id '
@@ -143,32 +143,44 @@ def linked_claim_text(c, task_id, roles, limit):
         (task_id,) + tuple(roles),
     ).fetchone()
     if row is None:
-        return ''
-    return distill(planning._claim_text(c, row[0]) or '', limit)
+        return '', ''
+    return distill(planning._claim_text(c, row[0]) or '', limit), row[0]
+
+
+def linked_claim_text(c, task_id, roles, limit):
+    return linked_claim(c, task_id, roles, limit)[0]
+
+
+KEYS = {
+    'current_meaning': 'meaning',
+    'why': 'why',
+    'now': 'now',
+    'vector': 'vector',
+    'boundaries': 'boundaries',
+    'tools': 'tools',
+    'gits': 'gits',
+}
+
+
+def resolve(c, name, props, task_id, context='', anchor=''):
+    """Resolve one variable and report where the value came from."""
+    spec = SPECS[name]
+    limit = spec['limit']
+    raw = props.get(KEYS[name])
+    if raw:
+        return {'text': distill(raw, limit, spec['markers']), 'source': 'property', 'anchor': anchor}
+    from_context = clause(context, CLAUSE_MARKERS.get(name, ()))
+    if from_context:
+        return {'text': distill(from_context, limit, spec['markers']), 'source': 'context', 'anchor': anchor}
+    text, claim_id = linked_claim(c, task_id, spec.get('roles') or (), limit)
+    if text:
+        return {'text': text, 'source': 'claim', 'anchor': claim_id}
+    return {'text': '', 'source': 'none', 'anchor': ''}
 
 
 def value(c, name, props, task_id, context=''):
-    """Resolve one variable: property, then context clause, then linked claim."""
-    spec = SPECS[name]
-    limit = spec['limit']
-    raw = props.get({
-        'current_meaning': 'meaning',
-        'why': 'why',
-        'now': 'now',
-        'vector': 'vector',
-        'boundaries': 'boundaries',
-        'tools': 'tools',
-        'gits': 'gits',
-    }[name])
-    if raw:
-        return distill(raw, limit, spec['markers'])
-    from_context = clause(context, CLAUSE_MARKERS.get(name, ()))
-    if from_context:
-        return distill(from_context, limit, spec['markers'])
-    from_claim = linked_claim_text(c, task_id, spec.get('roles') or (), limit)
-    if from_claim:
-        return from_claim
-    return ''
+    """Resolve one variable to plain text: property, context clause, linked claim."""
+    return resolve(c, name, props, task_id, context)['text']
 
 
 def render(c, name, props, task_id, context='', default='not recorded'):

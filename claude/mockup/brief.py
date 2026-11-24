@@ -34,6 +34,12 @@ def _line(task, header, props):
     )
 
 
+def _source(resolved, default='not recorded'):
+    if not resolved.get('text'):
+        return default
+    return '%s %s' % (resolved.get('source'), (resolved.get('anchor') or '?')[:8])
+
+
 def _choose_current(rows, children):
     in_progress = [row for row in rows if row.get('status') == 'in_progress']
     if in_progress:
@@ -127,9 +133,16 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'pinned by current_task=%s' % explicit if explicit_active
             else 'not marked; set current_task on the root claim to pin the active block'
         ))
-        lines.append('CURRENT MEANING: %s' % promptizer.render(c, 'current_meaning', props, current['plan_task_id'], props.get('context')))
-        lines.append('WHY: %s' % promptizer.render(c, 'why', props, current['plan_task_id'], props.get('context')))
-        lines.append('NOW: %s' % promptizer.render(c, 'now', props, current['plan_task_id'], props.get('context')))
+        sources = ['plan %s' % (revision or '?'), 'root %s' % (root_id or '?')[:8]]
+        meaning = promptizer.resolve(c, 'current_meaning', props, current['plan_task_id'], props.get('context'), header or '')
+        lines.append('CURRENT MEANING: %s' % (meaning['text'] or 'not recorded'))
+        sources.append('meaning=%s' % _source(meaning, 'not recorded'))
+        why = promptizer.resolve(c, 'why', props, current['plan_task_id'], props.get('context'), header or '')
+        now = promptizer.resolve(c, 'now', props, current['plan_task_id'], props.get('context'), header or '')
+        lines.append('WHY: %s' % (why['text'] or 'not recorded'))
+        lines.append('NOW: %s' % (now['text'] or 'not recorded'))
+        sources.append('why=%s' % _source(why, 'not recorded'))
+        sources.append('now=%s' % _source(now, 'not recorded'))
         ids = [row['plan_task_id'] for row in lineage]
         placeholders = ','.join('?' * len(ids))
         risks = []
@@ -177,7 +190,7 @@ def project_brief(svc, max_chars=MAX_CHARS):
         lines.append('NEXT: %s' % ('; '.join('%d) %s' % (index, step) for index, step in enumerate(next_steps, 1)) or 'none'))
 
         lines.append('RISKS: %s' % ('; '.join(risks[:3]) if risks else 'none linked'))
-        lines.append('RISK CHECKS: risk_claims=%d; conflicts=%d; stale_links=%d; linked_work_claims=%d' % (
+        lines.append('RISK CHECKS: risks=%d; conflicts=%d; stale=%d; work=%d' % (
             len(risks), len(conflicts), stale_links, sum(work_roles.values()),
         ))
         if conflicts:
@@ -193,18 +206,26 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'SELECT cl.id, cl.content_type, cl.raw FROM claims cl '
             "WHERE cl.origin_branch='main' AND NOT EXISTS "
             '(SELECT 1 FROM task_claims tc WHERE tc.claim_id=cl.id) '
-            'ORDER BY cl.rowid DESC LIMIT 3'
+            'ORDER BY cl.rowid DESC LIMIT 2'
         ):
-            recent.append('%s %s: %s' % (row['content_type'], row['id'][:8], _short(planning._claim_text(c, row['id']), 140)))
+            recent.append('%s %s: %s' % (row['content_type'], row['id'][:8], _short(planning._claim_text(c, row['id']), 110)))
         lines.append('RECENT STATEMENTS: %s' % ('; '.join(recent) if recent else 'none'))
         lines.append('ANCHORS: root %s; plan %s; headers %s' % (
             (root_id or '?')[:8], revision or '?', ', '.join(value[:8] for value in anchors),
         ))
-        vector = promptizer.render(c, 'vector', props, current['plan_task_id'], props.get('context'), default='')
-        lines.append('VECTOR: %s' % (vector or 'read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status'))
-        lines.append('BOUNDARIES: %s' % promptizer.render(c, 'boundaries', props, current['plan_task_id'], props.get('context')))
-        lines.append('TOOLS: %s' % promptizer.render(c, 'tools', props if props.get('tools') else root_props, current['plan_task_id'], props.get('context')))
-        lines.append('GITS: %s' % promptizer.render(c, 'gits', props if props.get('gits') else root_props, current['plan_task_id'], props.get('context')))
+        vector = promptizer.resolve(c, 'vector', props, current['plan_task_id'], props.get('context'), header or '')
+        lines.append('VECTOR: %s' % (vector['text'] or 'read current anchor -> dom_task_claims -> claim/update with basis -> verify -> mark status'))
+        boundaries = promptizer.resolve(c, 'boundaries', props, current['plan_task_id'], props.get('context'), header or '')
+        lines.append('BOUNDARIES: %s' % (boundaries['text'] or 'not recorded'))
+        tools_props, tools_anchor = (props, header or '') if props.get('tools') else (root_props, root_id or '')
+        tools = promptizer.resolve(c, 'tools', tools_props, current['plan_task_id'], props.get('context'), tools_anchor)
+        lines.append('TOOLS: %s' % (tools['text'] or 'not recorded'))
+        gits_props, gits_anchor = (props, header or '') if props.get('gits') else (root_props, root_id or '')
+        gits = promptizer.resolve(c, 'gits', gits_props, current['plan_task_id'], props.get('context'), gits_anchor)
+        lines.append('GITS: %s' % (gits['text'] or 'not recorded'))
+        for name, item in (('vector', vector), ('boundaries', boundaries), ('tools', tools), ('gits', gits)):
+            sources.append('%s=%s' % (name, _source(item) if item['text'] else ('default' if name == 'vector' else 'not recorded')))
+        lines.append('SOURCES: %s' % '; '.join(sources))
         lines.append('CHECKLIST:')
         checklist = [
             'hold root/branch/current baselines before acting',
@@ -213,6 +234,7 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'new claim: basis/refines/purpose and plan_task link',
             'branch is native: use the plan branch; variant only by fork/reconcile',
             'verify source/review/audit before accepting',
+            'trace a value through SOURCES before relying on it',
             'update the current block status after the work',
         ]
         if 'implements' not in work_roles:

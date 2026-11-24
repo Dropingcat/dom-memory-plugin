@@ -63,10 +63,16 @@ def main() -> int:
                 task_id = task["plan_task_id"]
                 value = promptizer.render(c, "now", {"now": "curated now"}, task_id, context)
                 assert value == "curated now", value
+                resolved = promptizer.resolve(c, "now", {"now": "curated now"}, task_id, context, "hdr-1")
+                assert resolved["source"] == "property" and resolved["anchor"] == "hdr-1", resolved
                 value = promptizer.render(c, "now", {}, task_id, context)
                 assert value == "идёт сборка promptizer v0 и его теста.", value
+                resolved = promptizer.resolve(c, "now", {}, task_id, context, "hdr-1")
+                assert resolved["source"] == "context" and resolved["anchor"] == "hdr-1", resolved
                 value = promptizer.render(c, "why", {}, task_id, "")
                 assert value == "not recorded", value
+                resolved = promptizer.resolve(c, "why", {}, task_id, "")
+                assert resolved["source"] == "none", resolved
         finally:
             if previous is None:
                 os.environ.pop("DOM_RUNTIME_ROOT", None)

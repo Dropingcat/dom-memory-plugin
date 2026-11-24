@@ -110,6 +110,27 @@ Example from the live plan (`П1.1`): each linked code/data/text claim has a `re
 - `RECENT STATEMENTS` includes the claim type, short id and a preview; the full source/distillate is read with `dom_context`/`dom_distillate`.
 - The whole note is capped at 3,400 characters.
 
+## Traceability (SOURCES)
+
+Every value carries its origin, printed as one `SOURCES` line:
+
+```text
+SOURCES: plan r17; root 149d33e5; meaning=property 5132659e; why=property 5132659e;
+now=property 5132659e; vector=property 5132659e; boundaries=property 5132659e;
+tools=property 5132659e; gits=property 5132659e
+```
+
+- `plan` is the revision of the plan projection, `root` is the root request claim.
+- `property <id>` means the value is the header/root claim's curated property with that anchor.
+- `context <id>` means the clause was taken from the header context after its marker.
+- `claim <id>` means no property existed and the thesis was distilled from the latest linked work claim.
+- `not recorded` means no source exists; the value is not guessed.
+- `vector=default` means the block uses the built-in execution hint, not a DOM value.
+
+`SOURCES` is the lookup key for the question-answer chain: read the anchor with `dom_context`,
+walk `basis`/`refines`, and only then act. The brief stays a pointer; the ledger keeps the text.
+
+
 ## Injection
 
 - The `prompt` hook generates the note and caches it per session.
