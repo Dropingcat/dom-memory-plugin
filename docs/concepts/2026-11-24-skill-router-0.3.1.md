@@ -216,7 +216,50 @@ reach. The queue therefore stays additive: `dom.notes` + `dom.skill-queue` + out
 Shrinking the catalog is a 0.4 item that needs a core-level skill filter. See
 `docs/concepts/2026-11-24-prompt-block-layout.md` → "E4 result".
 
-### Decision 9 — the dashboard profile is an option, not the default
+### Decision 9 — the heuristic runs on the default agent; the profile is only for size
+
+The agent profile from Decision 10 answers one question: how to remove 69k from the prompt. It does
+not answer "which skill for this step" — that is the router's job, and the router needs no separate
+agent. Running the heuristic on the default agent keeps the catalog visible, which is also the only
+way to observe misses: if a step needs a skill the queue omitted, the model can still load it, and
+`execute.after` records the miss. Under `deny` that signal disappears.
+
+Router inputs (all deterministic):
+
+- the plan step: path, title, header `context`, task type, status;
+- linked claims of the step and their content types (code, data, decision, text);
+- the registry: `ctx.skill.list()` ids + descriptions (or the catalog when the list is partial);
+- history: the last N outcomes, weights, recent misses;
+- boundaries: the step's `boundaries` property (what the step must not touch).
+
+Selection: `score = prior(step_type) + weight(user, skill) + rule(step_keywords, skill_tags)`, top-k
+with `k ≤ 3`, exploration 10% of steps (take the 4th candidate) so the router can discover a better
+skill. Ties break by digest order, so the choice is reproducible.
+
+Injection: step 1 of a turn attaches skills through `prompt.skills` (native validation); later steps
+replace `dom.skill-queue` with ids, one-line "when to use" and digests. Bodies are loaded by the
+`skill` tool while the catalog is visible.
+
+Feedback and learning:
+
+| Signal | Source | Meaning | Update |
+|---|---|---|---|
+| queued skill used | `execute.after` on the skill tool | hit | weight +0.05 |
+| queued skill unused after the step | next step advance / turn end | failure | weight −0.05 |
+| requested skill outside the queue | `execute.after` | miss | weight +0.00, edge added |
+| tool error after a skill load | `execute.after` | error | weight −0.10, description patch candidate |
+| step completed without a re-plan | plan status | sufficiency | coverage counter |
+
+Edges `step_type → skill` are stored as claims with evidence counts, so the learned map is auditable
+and survives sessions; hot weights live in `ctx.storage` and snapshot to `skill_weights` every 10
+steps. Decay ×0.98 per 10 steps, prior 0.5, reset to prior every 100 steps.
+
+Evaluation before any size optimisation: queue hit rate, miss rate, steps per turn, tokens of the
+queue entry. If selection quality holds, the profile from Decision 10 can later reuse the same router
+with bodies injected, without changing the learning loop.
+
+
+### Decision 10 — the dashboard profile is an option, not the default
 
 E6 measured: `permissions: deny *` plus `allow dom-dashboard` leaves one catalog entry (69 276 → 575
 chars), and a marker in that entry can be replaced per request with the live queue (proven by
