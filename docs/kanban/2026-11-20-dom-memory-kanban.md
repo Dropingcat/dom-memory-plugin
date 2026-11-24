@@ -724,6 +724,7 @@ $py = 'E:\opencode_harness_portable\.venv\Scripts\python.exe'
 | 2026-11-24 | — | — | — | DOM brief in `dom.notes`: ROOT→LINE→CURRENT baselines, ACTIVE pin, DONE/PLANNED, RISKS, RECENT MAIN, ANCHORS, VECTOR, CHECKLIST; live plan auto-selects П1 and warns `ACTIVE: not marked`; evidence `docs/kanban/runs/2026-11-24-dom-brief.md` | orchestrator |
 | 2026-11-24 | — | — | — | brief cache per session: prompt stores the brief, context re-injects it on tool continuations; `check_prompt_snapshot.mjs` asserts two consecutive snapshots carry `dom.notes`; live `index.js` updated + service restarted | orchestrator |
 | 2026-11-24 | — | — | — | plan r17: added П14 «Хуки, инъекции и notes-контур» + П14.1–П14.5; root properties `main_task`, `main_task_meaning`, `current_task=П14.2`, `gits`; current header properties meaning/why/now/vector/boundaries/tools/gits; notes schema `docs/concepts/2026-11-24-notes-schema.md` | orchestrator |
+| 2026-11-24 | — | — | — | notes v2: `NEXT` ordered (plan → missing graph links → conflicts → risks), `RISK CHECKS`, conflict paths, dynamic checklist, `GRAPH` roles; P14.2 linked implements+validates (4 work claims); schema/process doc updated | orchestrator |
 
 ### 17.1. Метрики доски
 

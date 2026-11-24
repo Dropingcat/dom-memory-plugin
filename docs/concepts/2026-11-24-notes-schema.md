@@ -28,6 +28,80 @@
 | `ANCHORS` | claim ids for root, plan, headers | computed |
 | `CHECKLIST` | what the agent must hold | static DOM contract |
 
+## Processes and requirements
+
+### RISKS
+
+1. Collect linked work claims of the current task (`task_claims`, role != `defines`).
+2. Mark a claim as a risk when its text contains `risk`, `blocker`, `аналит`, `analysis`, `decision`, `риск` or `блокер`.
+3. Count open plan conflicts and stale task links (`linked_at_plan_version` older than the task version).
+4. Emit at most three risk previews and a `RISK CHECKS` line with the counts.
+5. If no risk is found, write `none linked` **after** the checks; never invent a risk.
+
+Requirement: every risk must name a claim id and a short thesis; full text is read with `dom_context`.
+
+### CONFLICTS
+
+1. Source: `planning.open_conflicts(c)` (unforced `plan_conflicts` not followed by an ingest of the same principal).
+2. Show the count and the affected `item_paths`.
+3. A conflict is blocking for the current branch; the remediation is `dom_reconcile` or a new plan ingest that supersedes it.
+4. Do not hide a conflict behind `0 open` when the query failed; a failure is `not recorded`.
+
+### CHECKLIST
+
+The checklist is assembled, not static:
+
+- baseline: hold baselines, mark current task, no overwrite, anatomy/basis, native branch, verify, update status;
+- if the task has no `implements` link: add “link an implementing claim”;
+- if it has no `validates` link: add “add validation evidence”;
+- if conflicts: add “resolve the open plan conflict”;
+- if risks: add “mitigate the linked risk”;
+- if `NEXT` is non-empty: add “execute next step 1”.
+
+Each item is an action with an anchor (claim id or plan path); the maximum is nine items.
+
+### NEXT
+
+`NEXT` is ordered, not a bag:
+
+1. open siblings/children of the current task, in plan order;
+2. missing graph links (`implements`, `validates`);
+3. open conflicts;
+4. linked risks.
+
+Limit: four steps. Each step names a path or a concrete graph action. This is the sub-block that catches the “remnants” planning missed: if the plan has open items or the graph has a missing role, they become next steps instead of disappearing.
+
+### GRAPH
+
+`GRAPH` summarizes the task graph:
+
+- number of linked work claims and roles (`implements`, `validates`, `documents`, `depends_on`, ...);
+- edges are read with `dom_task_graph`: `supersedes`, `basis`, `refines`, `variant_of`, `task_link`;
+- a task with only the `defines` header has no work graph; the checklist and `NEXT` say so.
+
+Use the graph for the question-answer chain:
+
+1. resolve the task from the user question (`П14.2`, branch, title);
+2. read `dom_task_claims` and `dom_task_graph` for that task;
+3. follow `basis`/`refines` to the source/distillate;
+4. inject the anchor and a one-sentence thesis; the agent reads the full text with `dom_context`.
+
+The graph decides **which** claims are relevant; the question decides **what** to ask; the brief only carries pointers.
+
+## Knowledge graph on claims
+
+The existing graph is a claim graph, not a separate graph database:
+
+- a claim has versions and replacement edges (`supersedes`);
+- anatomy adds `basis` and `refines` edges;
+- plan links add `task_link` edges with a role;
+- variants add `variant_of` and `merged_into` edges;
+- conflicts add `conflict`/`resolve` events.
+
+Example from the live plan (`П1.1`): each linked code/data/text claim has a `refines` edge to the item header and a `task_link` edge with role `documents`. For `П14.2`, after linking the implementation and validation claims, the graph reports `documents=2, implements=1, validates=1`.
+
+
+
 ## Value policy
 
 - A missing value is printed as `not recorded`; the generator never invents it.

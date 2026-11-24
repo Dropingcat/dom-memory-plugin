@@ -130,14 +130,6 @@ def project_brief(svc, max_chars=MAX_CHARS):
         lines.append('CURRENT MEANING: %s' % _short(props.get('meaning') or 'not recorded', 240))
         lines.append('WHY: %s' % _short(props.get('why') or 'not recorded', 240))
         lines.append('NOW: %s' % _short(props.get('now') or 'not recorded', 240))
-        siblings = children.get(current.get('parent_id'), [])
-        done = [row for row in siblings if row.get('status') == 'done']
-        planned = [row for row in siblings if row is not current and row.get('status') not in ('done', 'cancelled')]
-        planned += [row for row in children.get(current['plan_task_id'], []) if row.get('status') not in ('done', 'cancelled')]
-        lines.append('DONE: %d done in the current branch; PLANNED: %s' % (
-            len(done), ', '.join(row['path'] for row in planned[:6]) or 'none',
-        ))
-
         ids = [row['plan_task_id'] for row in lineage]
         placeholders = ','.join('?' * len(ids))
         risks = []
@@ -151,8 +143,51 @@ def project_brief(svc, max_chars=MAX_CHARS):
             if any(word in text.lower() for word in RISK_WORDS):
                 risks.append('%s %s: %s' % (row['content_type'], row['id'][:8], _short(text, 180)))
         conflicts = planning.open_conflicts(c)
+        siblings = children.get(current.get('parent_id'), [])
+        done = [row for row in siblings if row.get('status') == 'done']
+        planned = [row for row in siblings if row is not current and row.get('status') not in ('done', 'cancelled')]
+        planned += [row for row in children.get(current['plan_task_id'], []) if row.get('status') not in ('done', 'cancelled')]
+        lines.append('DONE: %d done in the current branch' % len(done))
+        next_steps = []
+        for row in planned[:4]:
+            next_steps.append('%s %s [%s]' % (row['path'], _short(row.get('title'), 80), row.get('status')))
+        roles = {
+            row[0]: row[1]
+            for row in c.execute(
+                'SELECT role, count(*) FROM task_claims WHERE plan_task_id=? GROUP BY role',
+                (current['plan_task_id'],),
+            )
+        }
+        work_roles = {role: count for role, count in roles.items() if role != 'defines'}
+        current_version = current.get('version') or 0
+        stale_links = c.execute(
+            "SELECT count(*) FROM task_claims WHERE plan_task_id=? AND role!='defines' AND linked_at_plan_version<?",
+            (current['plan_task_id'], current_version),
+        ).fetchone()[0]
+        if 'implements' not in work_roles:
+            next_steps.append('link an implementing claim to the current task')
+        if 'validates' not in work_roles:
+            next_steps.append('add validation evidence for the current task')
+        if conflicts:
+            paths = sorted({path for item in conflicts for path in (item.get('item_paths') or [])})
+            next_steps.append('resolve the open plan conflict%s' % ((' on ' + ', '.join(paths[:3])) if paths else ''))
+        if risks:
+            next_steps.append('mitigate the linked risk')
+        next_steps = list(dict.fromkeys(next_steps))[:4]
+        lines.append('NEXT: %s' % ('; '.join('%d) %s' % (index, step) for index, step in enumerate(next_steps, 1)) or 'none'))
+
         lines.append('RISKS: %s' % ('; '.join(risks[:3]) if risks else 'none linked'))
-        lines.append('CONFLICTS: %d open' % len(conflicts))
+        lines.append('RISK CHECKS: risk_claims=%d; conflicts=%d; stale_links=%d; linked_work_claims=%d' % (
+            len(risks), len(conflicts), stale_links, sum(work_roles.values()),
+        ))
+        if conflicts:
+            paths = sorted({path for item in conflicts for path in (item.get('item_paths') or [])})
+            lines.append('CONFLICTS: %d open%s' % (len(conflicts), (' on ' + ', '.join(paths[:6])) if paths else ''))
+        else:
+            lines.append('CONFLICTS: 0 open')
+        lines.append('GRAPH: %d linked work claims (%s); read edges with dom_task_graph' % (
+            sum(work_roles.values()), ', '.join('%s=%d' % (role, count) for role, count in sorted(work_roles.items())) or 'none',
+        ))
         recent = []
         for row in c.execute(
             'SELECT cl.id, cl.content_type, cl.raw FROM claims cl '
@@ -170,7 +205,7 @@ def project_brief(svc, max_chars=MAX_CHARS):
         lines.append('TOOLS: %s' % _short(props.get('tools') or root_tools or 'not recorded', 240))
         lines.append('GITS: %s' % _short(props.get('gits') or root_gits or 'not recorded', 240))
         lines.append('CHECKLIST:')
-        for item in (
+        checklist = [
             'hold root/branch/current baselines before acting',
             'mark the active block with current_task when it changes',
             'no overwrite: dom_update creates a new version',
@@ -178,7 +213,18 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'branch is native: use the plan branch; variant only by fork/reconcile',
             'verify source/review/audit before accepting',
             'update the current block status after the work',
-        ):
+        ]
+        if 'implements' not in work_roles:
+            checklist.append('link an implementing claim to the current task')
+        if 'validates' not in work_roles:
+            checklist.append('add validation evidence for the current task')
+        if conflicts:
+            checklist.append('resolve the open plan conflict')
+        if risks:
+            checklist.append('mitigate the linked risk')
+        if next_steps:
+            checklist.append('execute next step 1')
+        for item in checklist[:9]:
             lines.append('  [ ] ' + item)
     text = '\n'.join(lines)
     return text if len(text) <= max_chars else text[:max_chars - 1] + '…'

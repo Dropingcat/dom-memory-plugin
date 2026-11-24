@@ -63,6 +63,12 @@ def main() -> int:
         assert "NOW:" in result.stdout, result.stdout
         assert "TOOLS:" in result.stdout, result.stdout
         assert "GITS:" in result.stdout, result.stdout
+        assert "DONE:" in result.stdout, result.stdout
+        assert "NEXT:" in result.stdout, result.stdout
+        assert "RISKS:" in result.stdout, result.stdout
+        assert "RISK CHECKS:" in result.stdout, result.stdout
+        assert "CONFLICTS:" in result.stdout, result.stdout
+        assert "GRAPH:" in result.stdout, result.stdout
         assert "RECENT STATEMENTS:" in result.stdout, result.stdout
         assert "CHECKLIST:" in result.stdout, result.stdout
     print("PASS dom_index_injection: root/line/current/checklist brief printed when no check is due")
