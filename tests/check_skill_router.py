@@ -43,6 +43,8 @@ def main() -> int:
     second = skill_router.select(migration, SKILLS)
     assert first == second, "selection must be deterministic"
     assert len(first["current"]) <= 3, first
+    assert first["capability_version"] == skill_router.CAPABILITY_VERSION, first
+    assert "sqlite" in skill_router.CAPABILITIES, skill_router.CAPABILITIES
     assert ids(first)[0] == "sqlite-migration", first
     assert any("migration" in reason for reason in first["current"][0]["why"]), first
 

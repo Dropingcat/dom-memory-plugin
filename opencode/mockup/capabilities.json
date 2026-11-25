@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "capabilities": [
+    "testing",
+    "sqlite",
+    "migration",
+    "ledger",
+    "docs",
+    "ops",
+    "runtime",
+    "security",
+    "router",
+    "prompt",
+    "writer",
+    "review",
+    "git",
+    "panel"
+  ],
+  "accept_rules": {
+    "test": ["testing"],
+    "artifact": ["docs"],
+    "claim": ["ledger"],
+    "ops": ["ops", "runtime"],
+    "schema": ["sqlite", "migration"],
+    "route": ["router", "prompt"]
+  }
+}

@@ -10,6 +10,8 @@ plugin context hook, the prompt hook and the panel.
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 PRIORS = {
     'phase': 0.25,
@@ -40,20 +42,12 @@ FALLBACK_BELOW = 0.45
 DEFAULT_K = 3
 
 # Closed capability dictionary for 0.3.1. A capability that is not here cannot be routed.
-CAPABILITIES = (
-    'testing', 'sqlite', 'migration', 'ledger', 'docs', 'ops', 'runtime',
-    'security', 'router', 'prompt', 'writer', 'review', 'git', 'panel',
-)
-
-# accept kind -> capabilities it implies unless the item names them explicitly
-ACCEPT_RULES = {
-    'test': ('testing',),
-    'artifact': ('docs',),
-    'claim': ('ledger',),
-    'ops': ('ops', 'runtime'),
-    'schema': ('sqlite', 'migration'),
-    'route': ('router', 'prompt'),
-}
+# The dictionary is data, not code: it travels with the plugin and is versioned so two
+# machines can detect a skew before they exchange queues.
+_DATA = json.loads((Path(__file__).with_name('capabilities.json')).read_text(encoding='utf-8'))
+CAPABILITY_VERSION = int(_DATA.get('version') or 1)
+CAPABILITIES = tuple(_DATA['capabilities'])
+ACCEPT_RULES = {kind: tuple(caps) for kind, caps in _DATA['accept_rules'].items()}
 
 
 def capabilities_from_accept(accept):
@@ -210,6 +204,7 @@ def select(step, skills, weights=None, k=DEFAULT_K, explore=None):
         'confidence': round(confidence, 4),
         'fallback': fallback,
         'groups': rule_groups(step),
+        'capability_version': CAPABILITY_VERSION,
     }
 
 
@@ -225,4 +220,5 @@ def build_queue(step, next_step, skills, weights=None, k=DEFAULT_K):
         'prefetch': [item['id'] for item in (prefetch['current'] if prefetch else [])],
         'next': prefetch['step'] if prefetch else None,
         'groups': current['groups'],
+        'capability_version': CAPABILITY_VERSION,
     }

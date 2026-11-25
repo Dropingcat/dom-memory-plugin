@@ -1,7 +1,7 @@
-"""Start the read-only DOM monitor with a persistent local token file.
+﻿"""Start the read-only DOM monitor with a persistent local token file.
 
-    python opencode/monitor/start.py --project E:/path/to/project
-    python opencode/monitor/start.py --project E:/path/to/project --open
+    python opencode/monitor/start.py --project <project>
+    python opencode/monitor/start.py --project <project> --open
 
 The token is created once at
 `<project>/.dom-memory/observability/monitor.token` (owner-only where the OS
@@ -72,3 +72,4 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

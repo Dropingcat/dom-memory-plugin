@@ -1,4 +1,4 @@
-import assert from "node:assert/strict"
+﻿import assert from "node:assert/strict"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -7,7 +7,7 @@ import test from "node:test"
 import { register } from "../opencode/index.js"
 import { createObservability } from "../opencode/observability.js"
 
-const PY = "E:\\opencode_harness_portable\\.venv\\Scripts\\python.exe"
+const PY = process.env.DOM_PYTHON || process.env.PYTHON_BIN || "python"
 const DAY = () => new Date().toISOString().slice(0, 10)
 
 test("prompt hook writes one journal line with session, duration and db_path", async () => {
@@ -60,3 +60,4 @@ test("retention deletes old PID files but keeps the current one", () => {
   assert.equal(existsSync(old), false)
   assert.ok(existsSync(join(obsDir, `hooks-${DAY()}-${process.pid}.jsonl`)))
 })
+

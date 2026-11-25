@@ -1,4 +1,4 @@
-import assert from "node:assert/strict"
+﻿import assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -7,7 +7,7 @@ import test from "node:test"
 import { register } from "../opencode/index.js"
 import { canonicalJson, createObservability, sha256 } from "../opencode/observability.js"
 
-const PY = "E:\\opencode_harness_portable\\.venv\\Scripts\\python.exe"
+const PY = process.env.DOM_PYTHON || process.env.PYTHON_BIN || "python"
 
 test("snapshot stores blocks, redacts secrets, and hashes the full semantic input", () => {
   const dir = mkdtempSync(join(tmpdir(), "dom-snap-"))
@@ -103,3 +103,4 @@ test("context hook writes a snapshot through the registered handler", async () =
   }
   cleanup()
 })
+
