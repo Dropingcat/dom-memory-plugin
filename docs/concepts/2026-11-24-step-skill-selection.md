@@ -218,6 +218,94 @@ hit rate is unknown. Enable the entry once hit ≥ 0.7 and miss ≤ 0.2 over a w
 Guardrails: per-step cap 3, exploration 10% by path hash, stale weights (older plan version)
 ignored, fallback when coverage < 1, and no queue at all when the step has no `needs` and no rules.
 
+## Goal variable, skill cards and the fit matrix (2026-11-25)
+
+The keyword/needs layer is thin. Three additions make it non-circular and testable.
+
+### 1. The goal is a variable, not prose
+
+```text
+goal claim (type decision), properties:
+  target:      "0.3.0 trusted write loop released"
+  accept:      [{check, evidence}, ...]        # the project-level criteria
+  constraints: ["no new dependencies", "claims schema unchanged"]
+  version:     3
+```
+
+The plan generator reads `goal` and emits steps; each step carries its own `accept`. The router
+reads `goal.constraints` as boundaries and the step's `accept` as the local target. "What must be
+achieved" is machine-readable before any skill is chosen — otherwise the queue optimises a guess.
+
+### 2. `needs` come from acceptance checks, not from the title
+
+This removes the circularity ("router guesses needs from text"):
+
+| `accept` check | Kind | Derived needs |
+|---|---|---|
+| `tests/check_migration_v5.py` | test | `testing`, `sqlite`, `migration` |
+| `claim <id>` / `dom_find` evidence | claim | `ledger` |
+| `artifact docs/x.md` | artifact | `docs` |
+| `command: opencode service restart` | ops | `ops`, `runtime` |
+| no `accept` | unknown | **no queue**, `skill_search` |
+
+A step without acceptance has no needs and therefore no injected skills. That is the guard against
+inventing work: no criterion, no routing.
+
+### 3. Skill cards live in claims, and the list is a projection
+
+Do not add a second registry file. One claim per skill (type `code`, `relative_path` to `SKILL.md`):
+
+```text
+properties: id, path, digest(sha256 of content), provides[], verified, evidence[], owner, version
+```
+
+- `provides` is a capability list, not tags from marketing text;
+- `verified` is false until a test or a successful trial exists; unverified skills are not routed;
+- the router's list is a projection of these claims, so the "auto list of skills with properties"
+  is a view, never a hand-maintained file.
+
+The existing distillate chain is the right tool for editing a card: propose → validate → accept,
+with the evidence claim ids. A description patch and a `provides` patch are the same kind of change.
+
+### 4. The evaluation box: skill × step × checklist
+
+One claim per step, written in shadow mode:
+
+```text
+properties: step, candidates[
+  {skill, fit: yes|no|unknown, why, source: accept|tool|human|shadow}
+], outcome: hit|failure|error|miss|unknown
+```
+
+- bounded to ≤5 candidates per step, so a claim stays small;
+- `fit` is a hypothesis; the **label** comes from the outcome (hit/error/accept), never from the
+  selector's own verdict — otherwise the model teaches itself;
+- a human override (`source=human`) is allowed and recorded as evidence.
+
+### 5. What the labels train
+
+| Signal | Label | Used for |
+|---|---|---|
+| queued and loaded | hit | weight `(user, skill)`, count `(task_type, capability)` |
+| loaded outside the queue | miss | capability missing from the step's needs |
+| error after load | error | description/`provides` patch candidate |
+| queued, unused at step close | failure | needs over-specified or wrong provider |
+| accept passed | accept | confirms the whole chain for that step |
+
+With 20–30 steps, learn counters and promotion/demotion of capabilities, not a model. Weights stay
+secondary; the capability graph is the primary structure.
+
+### 6. Why the current structure is brittle, and what contains it
+
+| Weak point | Why | Containment |
+|---|---|---|
+| hand-written `needs` | drift, guesswork | derive from `accept`; no accept → no queue |
+| `provides` from descriptions | marketing text | cards in claims with evidence; unverified excluded |
+| single-user learning | overfits fast | priors + decay + reset/100, exploration 10% |
+| label leakage | selector grading itself | labels only from outcomes; shadow before injection |
+| vocabulary bloat | a second catalog | 10–20 capabilities, reviewed as claims |
+| step invention | drift from the goal | steps come from the goal generator; router never writes steps |
+
 ## Guards and failure modes
 
 - No plan or no current step → no queue, `dom.notes` alone.
