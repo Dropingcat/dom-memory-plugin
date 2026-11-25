@@ -39,6 +39,60 @@ FORCED_SCORE = 1.50
 FALLBACK_BELOW = 0.45
 DEFAULT_K = 3
 
+# Closed capability dictionary for 0.3.1. A capability that is not here cannot be routed.
+CAPABILITIES = (
+    'testing', 'sqlite', 'migration', 'ledger', 'docs', 'ops', 'runtime',
+    'security', 'router', 'prompt', 'writer', 'review', 'git', 'panel',
+)
+
+# accept kind -> capabilities it implies unless the item names them explicitly
+ACCEPT_RULES = {
+    'test': ('testing',),
+    'artifact': ('docs',),
+    'claim': ('ledger',),
+    'ops': ('ops', 'runtime'),
+    'schema': ('sqlite', 'migration'),
+    'route': ('router', 'prompt'),
+}
+
+
+def capabilities_from_accept(accept):
+    """Capabilities implied by acceptance items; unmapped items are reported, not guessed."""
+    caps = set()
+    unmapped = []
+    for item in accept or []:
+        if not isinstance(item, dict):
+            unmapped.append('?')
+            continue
+        explicit = [str(cap) for cap in (item.get('capabilities') or [])]
+        caps.update(cap for cap in explicit if cap in CAPABILITIES)
+        kind = str(item.get('type') or '')
+        if kind in ACCEPT_RULES:
+            caps.update(ACCEPT_RULES[kind])
+        elif not explicit:
+            unmapped.append(str(item.get('id') or kind or '?'))
+    return sorted(caps), unmapped
+
+
+def step_state(step):
+    """ready | awaiting_definition | awaiting_human | blocked_capability | blocked_provider."""
+    accept = step.get('accept') or []
+    if not accept:
+        return {'state': 'awaiting_definition', 'capabilities': [], 'unmapped': [],
+                'reason': 'no acceptance criteria; ask the user for what "done" means'}
+    caps, unmapped = capabilities_from_accept(accept)
+    if unmapped:
+        return {'state': 'blocked_capability', 'capabilities': caps, 'unmapped': unmapped,
+                'reason': 'accept item has no capability mapping; create a gap claim'}
+    if not caps:
+        return {'state': 'blocked_capability', 'capabilities': [], 'unmapped': [],
+                'reason': 'accept mapped to an empty capability set'}
+    if any(item.get('automated') is False for item in accept if isinstance(item, dict)):
+        return {'state': 'awaiting_human', 'capabilities': caps, 'unmapped': [],
+                'reason': 'accept item requires a human verdict'}
+    return {'state': 'ready', 'capabilities': caps, 'unmapped': [], 'reason': 'accept is automated'}
+
+
 
 def _text(value):
     return ' '.join(str(value or '').lower().split())
@@ -54,6 +108,7 @@ def normalize_step(step):
         'boundaries': str(step.get('boundaries') or ''),
         'claims': [str(item) for item in (step.get('claims') or [])],
         'needs': [str(item) for item in (step.get('needs') or [])],
+        'accept': list(step.get('accept') or []),
         'hints_skills': [str(item) for item in (step.get('hints_skills') or [])],
         'hints_no_skills': [str(item) for item in (step.get('hints_no_skills') or [])],
     }

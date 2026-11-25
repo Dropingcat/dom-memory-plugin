@@ -118,6 +118,38 @@ def main() -> int:
     assert "python-test" in queue["prefetch"], queue
     assert queue["current"][0]["id"] == "sqlite-migration", queue
 
+    # step states: no accept -> awaiting definition, not a silent empty queue
+    bare = skill_router.normalize_step({"path": "П15.9", "title": "no criteria"})
+    state = skill_router.step_state(bare)
+    assert state["state"] == "awaiting_definition", state
+
+    ready = skill_router.normalize_step({
+        "path": "П15.2", "title": "migration",
+        "accept": [{"id": "A1", "type": "test", "check": "tests/check_migration_v5.py", "automated": True}],
+    })
+    state = skill_router.step_state(ready)
+    assert state["state"] == "ready" and state["capabilities"] == ["testing"], state
+
+    human = skill_router.normalize_step({
+        "path": "П15.3", "title": "readability",
+        "accept": [{"id": "A2", "type": "artifact", "automated": False}],
+    })
+    assert skill_router.step_state(human)["state"] == "awaiting_human", skill_router.step_state(human)
+
+    unmapped = skill_router.normalize_step({
+        "path": "П15.4", "title": "vibes",
+        "accept": [{"id": "A9", "type": "vibes"}],
+    })
+    state = skill_router.step_state(unmapped)
+    assert state["state"] == "blocked_capability" and state["unmapped"] == ["A9"], state
+
+    explicit = skill_router.normalize_step({
+        "path": "П15.5", "title": "custom",
+        "accept": [{"id": "A3", "type": "custom", "capabilities": ["security", "nonsense"]}],
+    })
+    state = skill_router.step_state(explicit)
+    assert state["state"] == "ready" and state["capabilities"] == ["security"], state
+
     print("PASS skill_router: rules, priors, claims, hints, weights, fallback, exploration, prefetch")
     return 0
 

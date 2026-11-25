@@ -306,6 +306,42 @@ secondary; the capability graph is the primary structure.
 | vocabulary bloat | a second catalog | 10–20 capabilities, reviewed as claims |
 | step invention | drift from the goal | steps come from the goal generator; router never writes steps |
 
+### Amendments adopted from the 2026-11-25 review
+
+Adopted as written:
+
+- **Staged outcome**: `queued → injected → selected → executed → ok → accepted`; labels `hit`,
+  `miss`, `error`, `excess`, `failure`, `unknown`. `excess` = queued, unused, step accepted;
+  `failure` = queued, unused, step not accepted. Prefetch carries `queue_scope=next` and is never
+  counted as failure on the current step.
+- **`automated: true|false` per accept item**: a non-automated item puts the step in
+  `awaiting_human`; it can close only with a recorded human approval and never moves promotion.
+- **Card states**: `unverified → shadow → verified → deprecated`. `shadow` participates in the fit
+  matrix but is never injected; `verified` needs a test, a trial with evidence, or a human approval.
+- **Plan version in the queue and the fit claim**; a replanned step invalidates the queue.
+- **`fallback_search_rate = skill_search_calls / steps`** as a health metric; > 10–15% is a defect
+  of the capability dictionary or the cards, not normal work.
+- **No accept → `awaiting_definition`**, a first-class state with a `need_accept` claim, shown in the
+  brief as "waiting for acceptance criteria"; the hole becomes a visible task instead of a silent
+  empty queue. Implemented in `skill_router.step_state()`.
+
+Pushback (kept narrow for 0.3.1):
+
+1. **The acceptor must be independent.** Evidence for `test`/`ops` comes from the harness (exit
+   code, command output), not from a claim the agent can write. A `claim`-type accept must require
+   a claim written under the verifier principal; otherwise the agent satisfies its own check. This
+   is where 0.3.0's trusted writes become a prerequisite, not a parallel track.
+2. **No proposal workflow yet.** Goal drafts, accept drafts and card patches are model proposals in
+   principle, but 0.3.1 should start with human-authored goal/accept and manually curated cards. A
+   proposal pipeline before the acceptor exists is machinery without a signal.
+3. **Hysteresis on the minimal cover.** Greedy cover can oscillate between two near-equal skills.
+   Keep a skill that was in the previous queue unless coverage changes or the weight delta is
+   > 0.15; queue replacement stays ≤ 1 per plan step.
+4. **Verify injection, do not assume it.** `injected` is true only after reading the instruction
+   entry back (list) and matching the digest. Otherwise a silently failed entry poisons the outcome.
+5. **`accepted` stays null until the acceptor exists.** Until then labels are `hit`/`miss`/`error`
+   only, promotion is disabled, and the shadow window is the only consumer.
+
 ## Guards and failure modes
 
 - No plan or no current step → no queue, `dom.notes` alone.
