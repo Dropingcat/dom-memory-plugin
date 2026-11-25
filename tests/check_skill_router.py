@@ -10,16 +10,17 @@ sys.path.insert(0, str(ROOT / "opencode"))
 from mockup import skill_router  # noqa: E402
 
 SKILLS = [
-    {"id": "sqlite-migration", "tags": ["migration", "ledger"], "description": "V5 migration, fixtures"},
-    {"id": "python-test", "tags": ["testing"], "description": "pytest and node --test"},
-    {"id": "code-review", "tags": ["review"], "description": "review a diff"},
-    {"id": "writer", "tags": ["writing", "docs"], "description": "reports and prose"},
-    {"id": "docs-md", "tags": ["docs"], "description": "concept docs"},
-    {"id": "prompt-brief", "tags": ["prompt", "planning"], "description": "dom.notes and injection"},
-    {"id": "git-release", "tags": ["git"], "description": "commits and tags"},
-    {"id": "security-gate", "tags": ["security", "ledger"], "description": "WriteContext and the gate"},
-    {"id": "dom-memory", "tags": ["ledger", "planning"], "description": "claims and versions"},
-    {"id": "panel", "tags": ["planning"], "description": "monitor and panel"},
+    {"id": "sqlite-migration", "tags": ["migration", "ledger"], "provides": ["sqlite", "migration", "ledger"], "description": "V5 migration, fixtures"},
+    {"id": "python-test", "tags": ["testing"], "provides": ["testing", "python"], "description": "pytest and node --test"},
+    {"id": "code-review", "tags": ["review"], "provides": ["review"], "description": "review a diff"},
+    {"id": "writer", "tags": ["writing", "docs"], "provides": ["writing"], "description": "reports and prose"},
+    {"id": "docs-md", "tags": ["docs"], "provides": ["docs", "markdown"], "description": "concept docs"},
+    {"id": "prompt-brief", "tags": ["prompt", "planning"], "provides": ["prompt", "planning"], "description": "dom.notes and injection"},
+    {"id": "git-release", "tags": ["git"], "provides": ["git"], "description": "commits and tags"},
+    {"id": "security-gate", "tags": ["security", "ledger"], "provides": ["security", "session", "gate"], "description": "WriteContext and the gate"},
+    {"id": "dom-memory", "tags": ["ledger", "planning"], "provides": ["ledger", "planning"], "description": "claims and versions"},
+    {"id": "panel", "tags": ["planning"], "provides": ["panel", "planning"], "description": "monitor and panel"},
+    {"id": "triz-decoy", "tags": ["ledger", "planning"], "provides": ["triz", "contradiction"], "description": "contradiction matrix"},
 ]
 
 
@@ -88,6 +89,28 @@ def main() -> int:
     assert exploring is not None
     result = skill_router.select(exploring, SKILLS)
     assert "exploration" in result["current"][-1]["why"], result
+
+    # capability needs beat description keywords and decoys
+    needs_step = skill_router.normalize_step({
+        "path": "П15.2", "title": "L2 V5 migration", "needs": ["sqlite", "migration", "ledger"],
+    })
+    result = skill_router.select(needs_step, SKILLS)
+    assert ids(result)[0] == "sqlite-migration", result
+    assert "triz-decoy" not in ids(result), result
+    assert result["confidence"] > 0.9, result
+    assert any("needs=sqlite,migration,ledger (3/3)" in reason for reason in result["current"][0]["why"]), result
+
+    # needs with no provider: no arbitrary picks, fall back to search
+    missing = skill_router.normalize_step({"path": "П15.9", "title": "no provider", "needs": ["unknown-capability"]})
+    empty = skill_router.select(missing, SKILLS)
+    assert empty["current"] == [], empty
+    assert empty["fallback"] == "skill_search", empty
+
+    partial = skill_router.normalize_step({
+        "path": "П15.4", "title": "trusted session", "needs": ["sqlite", "migration", "security"],
+    })
+    order = ids(skill_router.select(partial, SKILLS))
+    assert order.index("sqlite-migration") < order.index("security-gate"), order
 
     # prefetch returns the next step
     queue = skill_router.build_queue(migration, testing, SKILLS)

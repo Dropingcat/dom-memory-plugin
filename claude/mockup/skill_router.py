@@ -53,6 +53,7 @@ def normalize_step(step):
         'context': str(step.get('context') or ''),
         'boundaries': str(step.get('boundaries') or ''),
         'claims': [str(item) for item in (step.get('claims') or [])],
+        'needs': [str(item) for item in (step.get('needs') or [])],
         'hints_skills': [str(item) for item in (step.get('hints_skills') or [])],
         'hints_no_skills': [str(item) for item in (step.get('hints_no_skills') or [])],
     }
@@ -80,6 +81,14 @@ def coverage(step, skill):
     return len(matched) / len(groups)
 
 
+def needs_ratio(step, skill):
+    needs = step.get('needs') or []
+    if not needs:
+        return None
+    provides = set(skill.get('provides') or [])
+    return len([need for need in needs if need in provides]) / len(needs)
+
+
 def score(step, skill, weight=0.5):
     """Return (score, why) for one skill and one step."""
     sid = str(skill.get('id') or '')
@@ -88,6 +97,15 @@ def score(step, skill, weight=0.5):
     if sid in step['hints_skills']:
         return FORCED_SCORE, ['forced by plan hint']
     why = []
+    needs = step.get('needs') or []
+    provides = set(skill.get('provides') or [])
+    if needs:
+        covered = [need for need in needs if need in provides]
+        ratio = len(covered) / len(needs)
+        value = 0.90 * ratio + 0.15 * PRIORS.get(step['task_type'], PRIORS['task']) + 0.30 * float(weight)
+        why.append('needs=%s (%d/%d)' % (','.join(covered) or 'none', len(covered), len(needs)))
+        why.append('weight=%.2f' % float(weight))
+        return value, why
     value = PRIOR_WEIGHT * PRIORS.get(step['task_type'], PRIORS['task'])
     why.append('prior(%s)=%.2f' % (step['task_type'], PRIORS.get(step['task_type'], PRIORS['task'])))
     groups = rule_groups(step)
@@ -117,6 +135,8 @@ def select(step, skills, weights=None, k=DEFAULT_K, explore=None):
     for skill in skills:
         sid = str(skill.get('id') or '')
         if not sid:
+            continue
+        if step.get('needs') and needs_ratio(step, skill) == 0:
             continue
         value, why = score(step, skill, weights.get(sid, 0.5))
         rows.append({'id': sid, 'score': round(value, 4), 'why': why, 'tags': sorted(skill.get('tags') or [])})
