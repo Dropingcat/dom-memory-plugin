@@ -49,6 +49,10 @@ def main(argv=None):
     try:
         prompt, session = payload(sys.stdin.read())
         session = session or (os.environ.get('DOM_SESSION') or None)
+        if session:  # L4: the host hook's sessionID is the session identity here
+            os.environ['DOM_SESSION'] = session
+            os.environ['DOM_SESSION_SOURCE'] = 'hook'
+            os.environ['DOM_ORIGIN'] = 'hook'
         sys.path.insert(0, str(ROOT))
         from mockup.paths import plugin_directory
         directory = Path(argv[0]).resolve() if argv else plugin_directory()

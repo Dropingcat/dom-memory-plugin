@@ -39,14 +39,40 @@ SCHEMA_VERSION = 5
 # and ``read_receipts`` (the read side of the same transaction: what was read and
 # at what chain head before an admission).  Additive only; nothing is backfilled.
 MIGRATION_V5_NAME = 'claim write sessions and read receipts'
-MIGRATION_V5_DOWN = ('DROP TABLE read_receipts; DROP TABLE claim_sessions; DELETE FROM schema_migrations WHERE version=5 '
+MIGRATION_V5_DOWN = ('ALTER TABLE candidates DROP COLUMN candidate_session; ALTER TABLE reviews DROP COLUMN reviewer_session; '
+                     'DROP TABLE read_receipts; DROP TABLE claim_sessions; DELETE FROM schema_migrations WHERE version=5 '
                      '(drop the immutable_* triggers of these tables first; then PRAGMA user_version=4)')
+# L3/L4/L5 extension of the v5 tables: what channel wrote/read (session_source,
+# origin) and the real database path that writer saw (db_realpath).  gate_status
+# is reserved for the L6 gate and is deliberately not enforced here.
+V5_CLAIM_SESSIONS_COLUMNS = (
+    ('session_source', 'TEXT'),
+    ('origin', 'TEXT'),
+    ('db_realpath', 'TEXT'),
+    ('gate_status', 'TEXT'),
+)
+V5_READ_RECEIPTS_COLUMNS = (
+    ('session_source', 'TEXT'),
+    ('origin', 'TEXT'),
+    ('db_realpath', 'TEXT'),
+)
+# L8 reviewer attribution: the candidate keeps the session that submitted it,
+# the review keeps the session that decided it.  Both nullable: a legacy row
+# (or a call without a session) stays NULL and is never backfilled.
+V5_CANDIDATES_COLUMNS = (
+    ('candidate_session', 'TEXT'),
+)
+V5_REVIEWS_COLUMNS = (
+    ('reviewer_session', 'TEXT'),
+)
 MIGRATION_V5_DDL = [
     "CREATE TABLE IF NOT EXISTS claim_sessions(session_id TEXT PRIMARY KEY, principal TEXT NOT NULL, "
     "branch TEXT NOT NULL, created_at TEXT NOT NULL, last_write_at TEXT, last_claim_id TEXT, "
-    "last_write_reason TEXT, updated_at TEXT)",
+    "last_write_reason TEXT, updated_at TEXT, session_source TEXT, origin TEXT, db_realpath TEXT, "
+    "gate_status TEXT)",
     "CREATE TABLE IF NOT EXISTS read_receipts(receipt_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, "
-    "session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT)",
+    "session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT, "
+    "session_source TEXT, origin TEXT, db_realpath TEXT)",
 ]
 
 # v4 (independent review T-01/T-02, TD-DOM-37 policy: _migrate_vN + ledger + DOWN):
@@ -98,8 +124,8 @@ IMMUTABLE_KEYS={
 DDL='''
 CREATE TABLE IF NOT EXISTS binding(id INTEGER PRIMARY KEY CHECK(id=1), work_ref TEXT UNIQUE NOT NULL, policy TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS branch_heads(branch TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>=0));
-CREATE TABLE IF NOT EXISTS candidates(id TEXT PRIMARY KEY, digest TEXT NOT NULL, payload BLOB NOT NULL, author TEXT NOT NULL, root TEXT NOT NULL, branch TEXT NOT NULL REFERENCES branch_heads(branch), created_at TEXT);
-CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY, candidate TEXT NOT NULL REFERENCES candidates(id), payload BLOB NOT NULL, review_level TEXT);
+CREATE TABLE IF NOT EXISTS candidates(id TEXT PRIMARY KEY, digest TEXT NOT NULL, payload BLOB NOT NULL, author TEXT NOT NULL, root TEXT NOT NULL, branch TEXT NOT NULL REFERENCES branch_heads(branch), created_at TEXT, candidate_session TEXT);
+CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY, candidate TEXT NOT NULL REFERENCES candidates(id), payload BLOB NOT NULL, review_level TEXT, reviewer_session TEXT);
 CREATE TABLE IF NOT EXISTS transactions(id TEXT PRIMARY KEY, branch TEXT NOT NULL REFERENCES branch_heads(branch), revision INTEGER NOT NULL, receipt BLOB NOT NULL, UNIQUE(branch,revision));
 CREATE TABLE IF NOT EXISTS claims(id TEXT PRIMARY KEY, candidate TEXT NOT NULL REFERENCES candidates(id), tx TEXT NOT NULL REFERENCES transactions(id), content_type TEXT NOT NULL, raw BLOB NOT NULL, raw_sha256 TEXT NOT NULL, encoding TEXT NOT NULL, media_type TEXT NOT NULL, source_ref TEXT NOT NULL, origin_branch TEXT NOT NULL, origin_version TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, tx TEXT NOT NULL REFERENCES transactions(id), claim_ref TEXT REFERENCES claims(id), branch TEXT NOT NULL, revision INTEGER NOT NULL, kind TEXT NOT NULL, payload BLOB NOT NULL, previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL);
@@ -201,8 +227,8 @@ CREATE TABLE IF NOT EXISTS plan_conflicts(
   at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL, down TEXT NOT NULL, applied_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS claim_sessions(session_id TEXT PRIMARY KEY, principal TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL, last_write_at TEXT, last_claim_id TEXT, last_write_reason TEXT, updated_at TEXT);
-CREATE TABLE IF NOT EXISTS read_receipts(receipt_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT);
+CREATE TABLE IF NOT EXISTS claim_sessions(session_id TEXT PRIMARY KEY, principal TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL, last_write_at TEXT, last_claim_id TEXT, last_write_reason TEXT, updated_at TEXT, session_source TEXT, origin TEXT, db_realpath TEXT, gate_status TEXT);
+CREATE TABLE IF NOT EXISTS read_receipts(receipt_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT, session_source TEXT, origin TEXT, db_realpath TEXT);
 -- P1.3: baseline is a projection of the append-only event log, never a table.
 -- ``baseline_view`` numbers claim chunks per branch (D3); ``branch_event_view``
 -- numbers every branch-local event so recall can stop before an archive or a
@@ -351,6 +377,17 @@ class Store:
         c.execute('BEGIN IMMEDIATE')
         try:
             for stmt in MIGRATION_V5_DDL: c.execute(stmt)
+            # A v5 database created by the previous L2 commit has the base tables
+            # without the L3/L4/L5 columns.  Add each missing column idempotently
+            # (CREATE TABLE IF NOT EXISTS does not extend an existing table).
+            for table, expected in (('claim_sessions', V5_CLAIM_SESSIONS_COLUMNS),
+                                    ('read_receipts', V5_READ_RECEIPTS_COLUMNS),
+                                    ('candidates', V5_CANDIDATES_COLUMNS),
+                                    ('reviews', V5_REVIEWS_COLUMNS)):
+                present = {row[1] for row in c.execute('PRAGMA table_info(' + table + ')')}
+                for column, sqltype in expected:
+                    if column not in present:
+                        c.execute('ALTER TABLE %s ADD COLUMN %s %s' % (table, column, sqltype))
             # A v5 database created before the correction carries the obsolete
             # immutable triggers on claim_sessions; a session row must update.
             for verb in ('UPDATE','DELETE','INSERT'):

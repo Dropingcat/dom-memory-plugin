@@ -35,6 +35,7 @@ them, as before.
 import argparse
 import hashlib
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -356,7 +357,11 @@ def main(argv=None):
         raw = sys.stdin.read()
         plan, kind = plan_from_hook(raw, args.todos)
         principal, role = launch_identity()
-        session = session_of(raw)
+        session = session_of(raw) or (os.environ.get('DOM_SESSION') or None)
+        if session:  # L4: the host hook's sessionID is the session identity here
+            os.environ['DOM_SESSION'] = session
+            os.environ['DOM_SESSION_SOURCE'] = 'hook'
+            os.environ['DOM_ORIGIN'] = 'hook'
         if plan is None:
             if kind == 'ExitPlanMode-missing':  # never silent (F-33): the agent sends the plan itself
                 print('plan_hook: approved plan not found in the hook payload', file=sys.stderr)

@@ -1,5 +1,6 @@
 """Single admission path; model input never supplies authority."""
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from .dom_contract import canonical,digest,raw_hash,decode,strict_loads,validate
 from .fixtures import WORK,TASK,POLICY
 from .ports import fixture_context
 from .storage import Store,MigrationRequired,SCHEMA_VERSION as STORE_SCHEMA_VERSION
+from .session import resolve_session
 from . import delivery as delivery_facts
 from . import public_dto
 from functools import wraps
@@ -234,6 +236,14 @@ class Service:
             work,task,policy=claim_entry_mod.identity(self.directory)
             self.context=_replace(self.context,work=work,task=task,policy=policy,branches=frozenset())
         self.store=Store(self.directory)
+        # L4: identity comes from the launch environment, never from a tool
+        # argument.  L5: the real database path this writer saw is recorded
+        # with every write/read receipt so health can compare channels.
+        self.session_identity=resolve_session()
+        self.session=self.session_identity.session
+        self.session_source=self.session_identity.source
+        self.origin=self.session_identity.origin
+        self.db_realpath=os.path.realpath(str(self.store.path))
         self.fault_hook=lambda stage: None
         self.omh_mode='available'
     @property
@@ -380,7 +390,7 @@ class Service:
                    json.dumps(sorted(binding['result_scope']))))
     def scope_digest(self): return digest(sorted(self.context.branches))
     @guarded
-    def submit(self,payload_json):
+    def submit(self,payload_json,session=None):
         self.scope(); self.capability('submit'); self.ready()
         try: p=strict_loads(payload_json)
         except (ValueError,TypeError): return {'status':'REJECTED','accepted_count':0,'errors':[{'local_id':None,'path':'$','code':'INVALID_JSON','required':True,'fix':'Use restricted JSON.'}],'rejected_local_ids':[]}
@@ -400,13 +410,20 @@ class Service:
             if i.get('event_type')=='applicability' and i['value']['branch']!=p['branch']: raise Denied('SCOPE_DENIED')
         with self.store.read() as c: self.check_references(c,p)
         q=normalized(p,self.context.principal,self.context.root); d=digest(q)
+        # L8: the candidate names the (trusted) session that submitted it; a
+        # call without one stores NULL, never an invented value.
+        candidate_session=session if type(session) is str and session.strip() else None
         with self.store.transaction() as c:
             binding={'candidate_id':None,'review_id':None,'branch':p['branch'],
                      'scope_digest':self.scope_digest(),'result_scope':{p['branch']}|set(p['dependencies'])}
             old=self.dedupe(c,'submit:'+self.context.principal,p['idempotency_key'],d,binding)
             if old: return old
             candidate=str(uuid.uuid4())
-            c.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?)',(candidate,d,canonical(q),self.context.principal,self.context.root,p['branch'],datetime.now(timezone.utc).isoformat()))
+            if 'candidate_session' in {r[1] for r in c.execute('PRAGMA table_info(candidates)')}:
+                c.execute('INSERT INTO candidates(id,digest,payload,author,root,branch,created_at,candidate_session) VALUES(?,?,?,?,?,?,?,?)',
+                          (candidate,d,canonical(q),self.context.principal,self.context.root,p['branch'],datetime.now(timezone.utc).isoformat(),candidate_session))
+            else:  # a pre-L8 database read without migration: no column to fill
+                c.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?)',(candidate,d,canonical(q),self.context.principal,self.context.root,p['branch'],datetime.now(timezone.utc).isoformat()))
             result={'status':'RECORDED_CANDIDATE','candidate_id':candidate,'intent_digest':d,'accepted_count':0,'simulated':True}
             self.remember(c,'submit:'+self.context.principal,p['idempotency_key'],d,result,dict(binding,candidate_id=candidate))
         return result
@@ -453,7 +470,7 @@ class Service:
                 'operation':p['operation'],'state':state,'author':row['author'],'expected_branch_revision':p['expected_branch_revision'],
                 'reason':p.get('reason'),'items':items,'simulated':True}
     @guarded
-    def review(self,candidate_id,intent_digest,decision='approve',note=None,_internal=False):
+    def review(self,candidate_id,intent_digest,decision='approve',note=None,_internal=False,session=_UNSET):
         self.capability('review'); self.ready()
         # 'superseded' is written only by dom_accept when it rebases a stale candidate.
         if decision not in ('approve','reject') and not (_internal and decision=='superseded'): raise Denied('INVALID_FIELD',field='decision')
@@ -468,13 +485,85 @@ class Service:
             level='self' if row['root']==self.context.root else 'independent'
             review=dict(review_level=level,candidate_digest=intent_digest,snapshot_digest=digest(p['dependencies']),dependencies=p['dependencies'],expected_revision=p['expected_branch_revision'],policy=p['policy_digest'],reviewer=self.context.principal,root=self.context.root,decision=decision,note=note or '',simulated=True,proof_ref='launcher-fixture-only')
         rid=str(uuid.uuid4())
+        # L8: the review names the session that decided it.  Default is this
+        # process' trusted session (DOM_SESSION); an explicit None records a
+        # missing reviewer session, which admit() then refuses.
+        reviewer_session=self.session if session is _UNSET else (session if type(session) is str and session.strip() else None)
         with self.store.transaction() as c:
-            if 'review_level' in {r[1] for r in c.execute('PRAGMA table_info(reviews)')}:
+            rv_cols={r[1] for r in c.execute('PRAGMA table_info(reviews)')}
+            if 'review_level' in rv_cols and 'reviewer_session' in rv_cols:
+                c.execute('INSERT INTO reviews(id,candidate,payload,review_level,reviewer_session) VALUES(?,?,?,?,?)',(rid,candidate_id,canonical(review),level,reviewer_session))
+            elif 'review_level' in rv_cols:  # pre-v3 database not yet migrated by dom_init/dom_start: label lives in the payload only
                 c.execute('INSERT INTO reviews(id,candidate,payload,review_level) VALUES(?,?,?,?)',(rid,candidate_id,canonical(review),level))
-            else:  # pre-v3 database not yet migrated by dom_init/dom_start: label lives in the payload only
+            elif 'reviewer_session' in rv_cols:
+                c.execute('INSERT INTO reviews(id,candidate,payload,reviewer_session) VALUES(?,?,?,?)',(rid,candidate_id,canonical(review),reviewer_session))
+            else:
                 c.execute('INSERT INTO reviews(id,candidate,payload) VALUES(?,?,?)',(rid,candidate_id,canonical(review)))
         if decision!='approve': return {'status':'REVIEW_REJECTED','review_id':rid,'decision':decision,'simulated':True}
         return {'status':'DEMO_REVIEWED','review_id':rid,'decision':'approve','simulated':True}
+    def _gate_check(self,c,branch,text,basis):
+        """L6 trusted-write gate (0.3.0: advisory).
+
+        A write may stand on claim ids (``basis`` / the claim it updates): the
+        gate allows it only when this same trusted session already holds a
+        ``read_receipts`` row for every such claim id.  ``review_policy='auto'``
+        has no gate; a project that was ever run under a stricter policy keeps
+        it (``stored_review_mode``), as everywhere else.
+
+        The refusal is typed (``GATE_NO_READ``) and the transaction the check
+        runs in is rolled back, so nothing is written.  ``claim_sessions.
+        gate_status`` is reserved for enforce mode and is not written here.
+        """
+        stored=stored_review_mode(c)
+        mode=self.review_mode
+        if REVIEW_STRICTNESS.get(stored,0)>REVIEW_STRICTNESS.get(mode,0): mode=stored
+        if mode=='auto': return
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='read_receipts'").fetchone() is None: return
+        ids=[b for b in basis if type(b) is str and b.strip()] if isinstance(basis,(list,tuple)) else []
+        if not ids: return
+        missing=[claim_id for claim_id in ids
+                 if c.execute('SELECT 1 FROM read_receipts WHERE claim_id=? AND session_id=? LIMIT 1',
+                              (claim_id,self.session)).fetchone() is None]
+        if missing:
+            raise Denied('GATE_NO_READ',hint=(
+                'This write stands on claim(s) this session has not read: %s. Read them first (dom_find / dom_context). '
+                'The trusted-write gate is advisory in 0.3.0 and writes nothing without a read receipt.' % ', '.join(missing[:3])))
+    def _gate_write(self,basis):
+        """Run the L6 gate in its own transaction before the delegated write."""
+        if not self.store.path.exists(): return
+        if self.review_mode=='auto':
+            with self.store.read() as c:
+                if REVIEW_STRICTNESS.get(stored_review_mode(c),0)<=REVIEW_STRICTNESS['auto']: return
+        with self.store.transaction() as c:
+            self._gate_check(c,None,'',basis)
+    def _record_session(self,c,branch,claim_id,reason):
+        """Upsert this session's single row inside the CALLER'S transaction (L3).
+
+        ``claim_sessions`` is mutable operational state: one row per session,
+        advanced on every write.  Being in the caller's transaction means a
+        rolled-back admission leaves neither the claim nor the session row.
+        ``created_at`` is set on first insert and never rewritten.
+        """
+        now=datetime.now(timezone.utc).isoformat()
+        c.execute('INSERT INTO claim_sessions(session_id, principal, branch, created_at, last_write_at, '
+                  'last_claim_id, last_write_reason, updated_at, session_source, origin, db_realpath) '
+                  'VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET '
+                  'principal=excluded.principal, branch=excluded.branch, last_write_at=excluded.last_write_at, '
+                  'last_claim_id=excluded.last_claim_id, last_write_reason=excluded.last_write_reason, '
+                  'updated_at=excluded.updated_at, session_source=excluded.session_source, '
+                  'origin=excluded.origin, db_realpath=excluded.db_realpath',
+                  (self.session,self.context.principal,branch,now,now,claim_id,reason,now,
+                   self.session_source,self.origin,self.db_realpath))
+    def _record_reads(self,c,pairs,stamp):
+        """Append one immutable receipt per (claim_id, branch) in the caller's
+        transaction (L3).  ``admitted_at`` stays NULL: a read never invents the
+        admission time.  ``stamp`` is the integrity stamp of the same read."""
+        for claim_id,branch in pairs:
+            c.execute('INSERT INTO read_receipts(receipt_id, claim_id, session_id, branch, read_at, '
+                      'admitted_at, chain_head, session_source, origin, db_realpath) '
+                      'VALUES(?,?,?,?,?,?,?,?,?,?)',
+                      (str(uuid.uuid4()),claim_id,self.session,branch,stamp['read_at'],None,
+                       stamp.get('chain_head'),self.session_source,self.origin,self.db_realpath))
     def _record_claim(self,c,claim_id,candidate_id,tx,p,item,revision,review_id):
         """Insert the claim and its immutable snapshot as one pair (TD-DOM-36).
 
@@ -509,6 +598,10 @@ class Service:
             if (r['root']==row['root'] and self.independent) or r['reviewer']!=self.context.principal: raise Denied('INDEPENDENCE_NOT_ENFORCED')
             if r['candidate_digest']!=intent_digest or r['policy']!=self.policy or p['policy_digest']!=self.policy or r['snapshot_digest']!=digest(p['dependencies']): raise Denied('STALE_REVIEW')
             if r.get('review_level','self' if r['root']==row['root'] else 'independent')!=('self' if r['root']==row['root'] else 'independent'): raise Denied('STALE_REVIEW')
+            # L8: an approval with no reviewer session is not admissible.
+            reviewer_session=rr['reviewer_session'] if 'reviewer_session' in rr.keys() else None
+            if reviewer_session is None:
+                raise Denied('REVIEWER_SESSION_REQUIRED',hint='This review carries no reviewer session (reviewer_session is NULL); nothing was admitted. Review again from a trusted session.')
             if any(self.head(c,b)!=v for b,v in p['dependencies'].items()): raise Denied('STALE_REVIEW')
             if self.head(c,p['branch'])!=p['expected_branch_revision'] or r['expected_revision']!=p['expected_branch_revision']: raise Denied('REVISION_CONFLICT')
             self.check_references(c,p)
@@ -533,6 +626,10 @@ class Service:
                 claim_digest=claim_row_digest(c.execute('SELECT * FROM claims WHERE id=?',(claim,)).fetchone()) if kind=='claim' else None
                 c.execute('INSERT INTO events(id,tx,claim_ref,branch,revision,kind,payload,previous_hash,event_hash) VALUES(?,?,?,?,?,?,?,?,?)',(event_id,tx,claim,p['branch'],revision,kind,canonical(provenance),previous,
                           event_hash_v2(previous,provenance,tx,p['branch'],event_id,kind,revision,claim,claim_digest)))
+            # L3: the session row commits or rolls back with the claim/events.
+            # ``claim`` is the last admitted claim id for 'claims', else the last
+            # event's claim_ref (None when an event names no claim).
+            self._record_session(c,p['branch'],claim if p['items'] else None,p.get('reason'))
             self.fault_hook('after_facts')
             changed=c.execute('UPDATE branch_heads SET revision=? WHERE branch=? AND revision=?',(revision,p['branch'],p['expected_branch_revision'])).rowcount
             if changed!=1: raise Denied('REVISION_CONFLICT')
@@ -712,7 +809,7 @@ class Service:
         try: p=strict_loads(payload_json)
         except (ValueError,TypeError): raise Denied('REJECTED')
         if type(p) is not dict or p.get('operation')!='append': raise Denied('REJECTED')
-        return self.submit(payload_json)
+        return self.submit(payload_json,session=self.session)
 
     @guarded
     def sync_status(self,branch):
@@ -1184,9 +1281,12 @@ class Service:
     @guarded
     def start(self,request=None,goal=None,branches=None,adopt=False): return claim_entry_mod.start(self,request,goal,branches,adopt)
     @guarded
-    def claim(self,branch,type,text,**fields): return claim_entry_mod.claim(self,branch,type,text,fields)
+    def claim(self,branch,type,text,**fields):
+        self._gate_write(fields.get('basis'))
+        return claim_entry_mod.claim(self,branch,type,text,fields)
     @guarded
     def update(self,claim_id,text,reason,idempotency_key=None,anatomy=None,expected_current=None,mode='auto'):
+        self._gate_write([claim_id])
         return claim_entry_mod.update(self,claim_id,text,reason,idempotency_key,anatomy,expected_current,mode)
     @guarded
     def task_graph(self,task,agent=None,include_history=True,include_children=True,limit=200):
@@ -1219,7 +1319,9 @@ class Service:
     @guarded
     def accept(self,candidate_id,decision='approve',note=None): return claim_entry_mod.accept(self,candidate_id,decision,note)
     @guarded
-    def annotate(self,claim_id,kind,**fields): return claim_entry_mod.annotate(self,claim_id,kind,fields)
+    def annotate(self,claim_id,kind,**fields):
+        self._gate_write([claim_id])
+        return claim_entry_mod.annotate(self,claim_id,kind,fields)
     @guarded
     def extract(self,task,text,provider=None,link_role='documents'):
         from . import llm; return llm.extract(self,task,text,provider,link_role)

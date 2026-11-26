@@ -227,6 +227,8 @@ RECORDS.update({
         'next_steps': ('list', 'NextStep'),
         'integrity': ('null', 'str'), 'review_policy': ('opaque',),
         'directory': 'str', 'db_path': 'str',
+        # L4/L5: session channel and cross-channel database-path health.
+        'session': ('opaque',), 'db': ('opaque',), 'health': ('opaque',),
     },
     'ClaimWritten': {
         'status': 'str', 'simulated': 'bool', 'claim_id': 'str', 'record_id': 'str',

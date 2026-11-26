@@ -50,6 +50,30 @@ const PLAN_AGENT = "plan"
 const DISCUSSION_MAX_CHARS = 24000 // the plan discussion, not the whole session history
 const DISCUSSION_MAX_MESSAGES = 80
 
+/* L7 trusted-write gate (advisory).  dom_claim stands on its anatomy basis,
+   dom_update/dom_annotate stand on the claim they change.  The hook asks the run
+   database whether this same session already read those claim ids; the Python
+   Service gate (admission.Service._gate_check) remains the invariant. */
+const GATE_TOOLS = new Set(["dom_claim", "dom_update", "dom_annotate"])
+const GATE_QUERY = `import sqlite3,sys
+db,sid,ids=sys.argv[1],sys.argv[2],sys.argv[3:]
+try:
+    con=sqlite3.connect(db,timeout=2)
+    bad=[i for i in ids if con.execute('SELECT 1 FROM read_receipts WHERE session_id=? AND claim_id=? LIMIT 1',(sid,i)).fetchone() is None]
+except Exception:
+    sys.exit(0)
+sys.exit(1 if bad else 0)`
+
+function gateIds(tool, args) {
+  if (tool === "dom_claim") {
+    return Array.isArray(args?.basis) ? args.basis.filter((id) => typeof id === "string" && id.trim()) : []
+  }
+  if (tool === "dom_update" || tool === "dom_annotate") {
+    return typeof args?.claim_id === "string" && args.claim_id.trim() ? [args.claim_id] : []
+  }
+  return []
+}
+
 function findRoot(explicit) {
   const candidates = explicit ? [resolve(explicit)] : [HERE, resolve(HERE, ".."), resolve(HERE, "../..")]
   for (const dir of candidates) {
@@ -216,7 +240,9 @@ export async function register(ctx) {
       encoding: "utf8",
       timeout: timeoutMs,
       cwd: projectDir,
-      env: sessionID ? { ...env, DOM_SESSION: sessionID } : env,
+      env: sessionID
+        ? { ...env, DOM_SESSION: sessionID, DOM_SESSION_SOURCE: "hook", DOM_ORIGIN: "hook" }
+        : env,
       windowsHide: true,
       maxBuffer: 8 * 1024 * 1024,
     })
@@ -251,6 +277,40 @@ export async function register(ctx) {
     if (note) return note
     if (result.stderr) return `[DOM project memory] plan_check_hook: ${result.stderr}`
     return ""
+  }
+
+  /* L7: the plugin-side gate.  Advisory: it refuses the call early with a reason,
+     but the Service invariant (GATE_NO_READ) still decides.  A missing database or
+     a failed probe never blocks: the hook only speaks when it can prove a miss. */
+  const gateCovers = (sessionID, ids) => {
+    if (!sessionID || !ids.length || !existsSync(dbFile)) return true
+    const result = spawnSync(python, ["-c", GATE_QUERY, dbFile, sessionID, ...ids], {
+      encoding: "utf8",
+      timeout: timeoutMs,
+      env,
+      windowsHide: true,
+    })
+    if (result.error) return true
+    return result.status === 0
+  }
+
+  const executeBefore = async (event, output) => {
+    const tool = event?.tool ?? event?.toolID ?? event?.name ?? ""
+    if (!GATE_TOOLS.has(tool)) return
+    const args = event?.args ?? output?.args ?? event?.input ?? {}
+    const sessionID = sessionOf(event) || (typeof event?.sessionID === "string" ? event.sessionID : "")
+    const ids = gateIds(tool, args)
+    const covered = gateCovers(sessionID, ids)
+    console.warn(
+      `[dom-memory gate] ${tool} ${ids.length ? (covered ? "ok" : "GATE_NO_READ advisory") : "no basis"} ` +
+        `session=${sessionID || "unknown"}${ids.length ? ` claims=${ids.join(",")}` : ""}`,
+    )
+    if (ids.length && !covered) {
+      throw new Error(
+        `GATE_NO_READ advisory: ${tool} stands on claim(s) this session has not read (${ids.join(", ")}). ` +
+          "Read them with dom_find or dom_context first. The Service gate is the invariant; this hook only warns early.",
+      )
+    }
   }
 
   const registrations = []
@@ -352,6 +412,13 @@ export async function register(ctx) {
       })
     }),
   )
+
+  /* L7: registered only when the host exposes the tool domain (the hook tests
+     call register() with a session-only ctx).  Advisory: the Service gate stays
+     the invariant even when this hook is absent or forged around. */
+  if (ctx.tool?.hook) {
+    registrations.push(await ctx.tool.hook("execute.before", executeBefore))
+  }
 
   return () => {
     for (const registration of registrations) {

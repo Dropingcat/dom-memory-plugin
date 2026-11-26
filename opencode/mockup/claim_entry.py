@@ -19,6 +19,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from .dom_contract import digest, raw_hash, valid_commit_ref
+from .session import same_db_path
 
 LITE_POLICY_DOC = {'version': 'lite-policy/v1', 'profile': 'lite'}
 BRANCH_RE = re.compile(r'^[A-Za-z0-9_-]{1,32}$')
@@ -323,7 +324,7 @@ def _commit(svc, branch, build):
         with svc.store.read() as c:
             revision = svc.head(c, branch)
         pkg = build(revision)
-        sub = svc.submit(json.dumps(pkg))
+        sub = svc.submit(json.dumps(pkg), session=svc.session)
         if sub.get('status') == 'STORAGE_BUSY' and busy < 8:
             busy += 1; time.sleep(0.05 * (2 ** min(busy, 5))); continue
         if sub.get('status') != 'RECORDED_CANDIDATE':
@@ -589,7 +590,7 @@ def claim(svc, branch, typ, text, fields):
     item_key = digest({'tag': 'claim', 'branch': branch, 'item': dict(item, local_id='')})[:40]
     key = idempotency_key or 'strict-claim-%s-r%d' % (item_key[:24], revision)
     pkg = _package(svc, branch, revision, [item], key, 'claims', origin_version, reason)
-    sub = svc.submit(json.dumps(pkg))
+    sub = svc.submit(json.dumps(pkg), session=svc.session)
     if sub.get('status') != 'RECORDED_CANDIDATE':
         return _surface(sub)
     return {'status': 'RECORDED_CANDIDATE', 'simulated': True, 'candidate_id': sub['candidate_id'],
@@ -657,7 +658,7 @@ def annotate(svc, claim_id, kind, fields):
     def build(rev):
         return _package(svc, branch, rev, [event], 'ann-%s-r%d' % (key_base, rev), 'append', row['origin_version'], reason)
     if svc.candidate_only:
-        sub = svc.submit(json.dumps(build(revision)))
+        sub = svc.submit(json.dumps(build(revision)), session=svc.session)
         if sub.get('status') != 'RECORDED_CANDIDATE':
             return _surface(sub)
         return {'status': 'RECORDED_CANDIDATE', 'simulated': True, 'candidate_id': sub['candidate_id'], 'intent_digest': sub['intent_digest'],
@@ -1005,7 +1006,7 @@ def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=Non
         with svc.store.read() as c:
             revision = svc.head(c, branch)
         key = idempotency_key or 'upd-%s-r%d' % (digest({'old': claim_id, 'item': dict(new_item, local_id='')})[:24], revision)
-        sub = svc.submit(json.dumps(_package(svc, branch, revision, [new_item], key, 'claims', origin_version, reason)))
+        sub = svc.submit(json.dumps(_package(svc, branch, revision, [new_item], key, 'claims', origin_version, reason)), session=svc.session)
         if sub.get('status') != 'RECORDED_CANDIDATE':
             return _surface(sub)
         return {'status': 'RECORDED_CANDIDATE', 'simulated': True, 'candidate_id': sub['candidate_id'], 'intent_digest': sub['intent_digest'],
@@ -1141,7 +1142,9 @@ def find(svc, query, branch, typ, requirement_ref, limit, plan_task=None, keywor
         branches = [b for b in branches if b in subtree]
     needle = query.casefold() if query else ''
     matches, total = [], 0
-    with svc.store.read() as c:
+    # L3: the read receipts are written in the same transaction as the read, so
+    # a receipt names exactly the rows and chain head this caller saw.
+    with svc.store.transaction() as c:
         stamp = svc.integrity_gate(c)
         archived = _archived(c)
         children = _children(c)
@@ -1173,6 +1176,7 @@ def find(svc, query, branch, typ, requirement_ref, limit, plan_task=None, keywor
                                 'review_level': _level(row['lvl'], row['rvp']), 'is_current': row['id'] not in archived,
                                 'record_id': record_id, 'logical_claim_id': record_id,
                                 'version': version, 'supersedes': parent.get(row['id']), 'revision': row['revision']})
+        svc._record_reads(c, [(m['claim_id'], m['branch']) for m in matches], stamp)
     from . import public_dto
     return {'status': 'FOUND', 'simulated': True, 'matches': matches, 'total': total, 'truncated': total > len(matches),
             'read_snapshot': public_dto.read_snapshot(stamp, branches)}
@@ -1710,6 +1714,28 @@ def claim_type_examples():
     return out
 
 
+def _db_health(svc):
+    """L5: compare every db_realpath recorded by a writer with the path this
+    process sees.  A missing table/column (pre-L5 database) reads as no rows;
+    no rows means OK.  A junction/case/unicode variant of the same path is not
+    a mismatch (``same_db_path``)."""
+    expected = os.path.realpath(str(svc.store.path))
+    seen = set()
+    if svc.store.path.exists():
+        with svc.store.read() as c:
+            for table in ('claim_sessions', 'read_receipts'):
+                try:
+                    for row in c.execute('SELECT DISTINCT db_realpath FROM ' + table):
+                        if row[0]:
+                            seen.add(row[0])
+                except sqlite3.OperationalError:
+                    continue
+    seen = sorted(seen)
+    mismatch = [p for p in seen if not same_db_path(p, expected)]
+    return {'status': 'DB_PATH_MISMATCH' if mismatch else 'OK', 'expected': expected,
+            'seen': seen, 'mismatch': mismatch}
+
+
 def describe(svc):
     state, work, branches, integrity = 'NOT_STARTED', None, [], None
     if svc.store.path.exists():
@@ -1762,10 +1788,16 @@ def describe(svc):
                   if state == 'FOREIGN_BASE' else
                   [{'tool': 'dom_find', 'arguments': {}, 'why': 'see the latest claims'},
                    {'tool': 'dom_claim', 'arguments': {'branch': branches[0] if branches else 'main', 'type': 'text', 'text': '<statement>'}, 'why': 'add a claim'}])
+    health = _db_health(svc)
     return {
         'status': 'DESCRIBED', 'profile': profile, 'simulated': svc.context.simulation, 'state': state, 'summary': summary,
         'directory': str(svc.store.path.parent),
         'db_path': os.path.realpath(str(svc.store.path)),
+        # L4: which channel this process is, as a launch-time fact.
+        'session': {'id': svc.session, 'source': svc.session_source, 'origin': svc.origin},
+        # L5: the path this process wrote/read and the cross-channel comparison.
+        'db': {'realpath': os.path.realpath(str(svc.store.path)), 'health': health},
+        'health': health,
         'integrity': integrity,
         # QA004 F-19: the launch policy is visible from the session (it cannot be changed from here)
         'review_policy': {'mode': svc.review_mode, 'launch_mode': svc.launch_review_mode, 'principal': svc.context.principal,

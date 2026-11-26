@@ -988,7 +988,9 @@ def context(svc, claim_id, depth=8):
     svc.ready()
     if type(depth) is not int or not 1 <= depth <= 32:
         raise Denied('INVALID_FIELD', field='depth')
-    with svc.store.read() as c:
+    # L3: the receipt is written in the same transaction as the read, so it
+    # names exactly the claims and chain head this caller saw.
+    with svc.store.transaction() as c:
         stamp = svc.integrity_gate(c)
         row = c.execute('SELECT * FROM claims WHERE id=?', (claim_id,)).fetchone() if type(claim_id) is str else None
         if row is None or row['origin_branch'] not in svc.context.branches:
@@ -1052,6 +1054,12 @@ def context(svc, claim_id, depth=8):
         resolution = ce.resolve_claim(c, claim_id)  # T-09 stitching: where this claim lives now
         if resolution['current_claim_id']:
             me['current_claim_id'] = resolution['current_claim_id']
+        # L3: one receipt per claim this answer was built from (the requested
+        # claim, its refines chain and its basis), each with its own branch.
+        read_branches = {claim_id: me['branch']}
+        read_branches.update({item['claim_id']: item['branch'] for item in chain})
+        read_branches.update({item['claim_id']: item['branch'] for item in basis if item.get('claim_id')})
+        svc._record_reads(c, sorted(read_branches.items()), stamp)
     from . import public_dto
     return {'status': 'CONTEXT', 'simulated': True, 'claim': me, 'resolution': resolution, 'refines_chain': chain, 'basis': basis,
             'refinements': refinements, 'plan': plan, 'root_request_claim_id': root[0] if root else None,
