@@ -21,12 +21,33 @@ IDEMPOTENCY_SCHEMA_VERSION = 1
 # age_seconds omitted, never 0).
 CANDIDATES_SCHEMA_VERSION = 2
 
+MIGRATION_V2_DDL = [
+    "ALTER TABLE candidates ADD COLUMN created_at TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_idempotency_candidate ON idempotency(candidate_id)",
+    "CREATE INDEX IF NOT EXISTS idx_claims_candidate ON claims(candidate)",
+]
+
 # WR-ADD (L0+L1): migration v3 — additive ``reviews.review_level`` (NULL for rows
 # written before v3; never backfilled, never guessed) plus the immutable
 # ``project_root`` (D-01 root request/goal) and ``adoptions`` (D-02) tables.
 # Same rule as v2: ``user_version`` is a monotone level; a v3-stamped DB that
 # lost the column refuses (MIGRATION_REQUIRED) instead of being silently rebuilt.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+# v5 (L2 of the trusted-write line, task П15.2): additive ``claim_sessions`` (the
+# trusted write-session frame: who wrote, on which branch, when, with what reason)
+# and ``read_receipts`` (the read side of the same transaction: what was read and
+# at what chain head before an admission).  Additive only; nothing is backfilled.
+MIGRATION_V5_NAME = 'claim write sessions and read receipts'
+MIGRATION_V5_DOWN = ('DROP TABLE read_receipts; DROP TABLE claim_sessions; DELETE FROM schema_migrations WHERE version=5 '
+                     '(drop the immutable_* triggers of these tables first; then PRAGMA user_version=4)')
+MIGRATION_V5_DDL = [
+    "CREATE TABLE IF NOT EXISTS claim_sessions(session_id TEXT PRIMARY KEY, principal TEXT NOT NULL, "
+    "branch TEXT NOT NULL, created_at TEXT NOT NULL, last_write_at TEXT, last_claim_id TEXT, "
+    "last_write_reason TEXT, updated_at TEXT)",
+    "CREATE TABLE IF NOT EXISTS read_receipts(receipt_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, "
+    "session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT)",
+]
 
 # v4 (independent review T-01/T-02, TD-DOM-37 policy: _migrate_vN + ledger + DOWN):
 # who sent a plan revision (plan_checks.principal/session), plan-item conflicts
@@ -36,14 +57,13 @@ MIGRATION_V4_NAME = 'plan attribution, plan conflicts, review policy log'
 MIGRATION_V4_DOWN = ('ALTER TABLE plan_checks DROP COLUMN session; ALTER TABLE plan_checks DROP COLUMN principal; '
                      'DROP TABLE plan_conflicts; DROP TABLE review_policy_log; DELETE FROM schema_migrations WHERE version=4 '
                      '(drop the immutable_* triggers of these tables first; then PRAGMA user_version=3)')
-
-MIGRATION_V2_DDL = [
+MIGRATION_V4_DDL = [
     "ALTER TABLE candidates ADD COLUMN created_at TEXT",
     "CREATE INDEX IF NOT EXISTS idx_idempotency_candidate ON idempotency(candidate_id)",
     "CREATE INDEX IF NOT EXISTS idx_claims_candidate ON claims(candidate)",
 ]
 
-IMMUTABLE=('schema_migrations','plan_conflicts','review_policy_log','binding','candidates','claims','claim_snapshots','events','reviews','transactions','idempotency','outbox','delivery_events','project_root','adoptions','plan_tasks','plan_task_versions','plan_branches','plan_checks')
+IMMUTABLE=('schema_migrations','plan_conflicts','review_policy_log','binding','candidates','claims','claim_snapshots','events','reviews','transactions','idempotency','outbox','delivery_events','project_root','adoptions','plan_tasks','plan_task_versions','plan_branches','plan_checks','claim_sessions','read_receipts')
 PLAN_SOURCES=('OMH','agent')
 # Every UNIQUE constraint of each immutable table.  ``INSERT OR REPLACE`` /
 # ``OR IGNORE`` / plain ``REPLACE`` resolve a conflict by deleting the stored
@@ -70,6 +90,8 @@ IMMUTABLE_KEYS={
     'plan_task_versions':(('plan_task_id','version'),),
     'plan_branches':(('plan_task_id',),('branch',)),
     'plan_checks':(('seq',),),
+    'claim_sessions':(('session_id',),),
+    'read_receipts':(('receipt_id',),),
 }
 DDL='''
 CREATE TABLE IF NOT EXISTS binding(id INTEGER PRIMARY KEY CHECK(id=1), work_ref TEXT UNIQUE NOT NULL, policy TEXT NOT NULL);
@@ -177,6 +199,8 @@ CREATE TABLE IF NOT EXISTS plan_conflicts(
   at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL, down TEXT NOT NULL, applied_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS claim_sessions(session_id TEXT PRIMARY KEY, principal TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL, last_write_at TEXT, last_claim_id TEXT, last_write_reason TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS read_receipts(receipt_id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, session_id TEXT NOT NULL, branch TEXT NOT NULL, read_at TEXT NOT NULL, admitted_at TEXT, chain_head TEXT);
 -- P1.3: baseline is a projection of the append-only event log, never a table.
 -- ``baseline_view`` numbers claim chunks per branch (D3); ``branch_event_view``
 -- numbers every branch-local event so recall can stop before an archive or a
@@ -277,6 +301,7 @@ class Store:
                     c.rollback(); raise
                 self._create_triggers(c)
             self._migrate_v4(c)
+            self._migrate_v5(c)
             c.execute('BEGIN IMMEDIATE')
             try:
                 row=c.execute('SELECT * FROM binding').fetchone()
@@ -315,6 +340,22 @@ class Store:
         except BaseException:
             c.rollback(); raise
         self._create_triggers(c)
+    def _migrate_v5(self,c):
+        """v5: additive claim write-session and read-receipt tables (L2 of the
+        trusted-write line, task П15.2).  Additive only; nothing is backfilled.
+        A v5-stamped DB that lost the tables refuses (MIGRATION_REQUIRED) like
+        the other monotone levels."""
+        from datetime import datetime, timezone
+        c.execute('BEGIN IMMEDIATE')
+        try:
+            for stmt in MIGRATION_V5_DDL: c.execute(stmt)
+            if c.execute('SELECT 1 FROM schema_migrations WHERE version=5').fetchone() is None:
+                c.execute('INSERT INTO schema_migrations(version,name,down,applied_at) VALUES(5,?,?,?)',
+                          (MIGRATION_V5_NAME,MIGRATION_V5_DOWN,datetime.now(timezone.utc).isoformat()))
+            c.commit()
+        except BaseException:
+            c.rollback(); raise
+        self._create_triggers(c)
     def migrate(self):
         """Schema-only upgrade of an existing database (no binding change): DDL, triggers,
         v4.  Lite opens call it when user_version is below SCHEMA_VERSION."""
@@ -324,6 +365,7 @@ class Store:
             c.executescript(DDL+DELIVERY_DDL)
             self._create_triggers(c)
             self._migrate_v4(c)
+            self._migrate_v5(c)
             c.execute('PRAGMA user_version = %d' % SCHEMA_VERSION)
         return True
     def _create_triggers(self,c):
