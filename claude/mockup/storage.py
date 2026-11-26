@@ -63,7 +63,10 @@ MIGRATION_V4_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_claims_candidate ON claims(candidate)",
 ]
 
-IMMUTABLE=('schema_migrations','plan_conflicts','review_policy_log','binding','candidates','claims','claim_snapshots','events','reviews','transactions','idempotency','outbox','delivery_events','project_root','adoptions','plan_tasks','plan_task_versions','plan_branches','plan_checks','claim_sessions','read_receipts')
+# claim_sessions is deliberately NOT immutable: one row per session is updated on
+# every write (last_write_at/last_claim_id/last_write_reason).  read_receipts is
+# append-only and stays guarded.
+IMMUTABLE=('schema_migrations','plan_conflicts','review_policy_log','binding','candidates','claims','claim_snapshots','events','reviews','transactions','idempotency','outbox','delivery_events','project_root','adoptions','plan_tasks','plan_task_versions','plan_branches','plan_checks','read_receipts')
 PLAN_SOURCES=('OMH','agent')
 # Every UNIQUE constraint of each immutable table.  ``INSERT OR REPLACE`` /
 # ``OR IGNORE`` / plain ``REPLACE`` resolve a conflict by deleting the stored
@@ -90,7 +93,6 @@ IMMUTABLE_KEYS={
     'plan_task_versions':(('plan_task_id','version'),),
     'plan_branches':(('plan_task_id',),('branch',)),
     'plan_checks':(('seq',),),
-    'claim_sessions':(('session_id',),),
     'read_receipts':(('receipt_id',),),
 }
 DDL='''
@@ -349,6 +351,10 @@ class Store:
         c.execute('BEGIN IMMEDIATE')
         try:
             for stmt in MIGRATION_V5_DDL: c.execute(stmt)
+            # A v5 database created before the correction carries the obsolete
+            # immutable triggers on claim_sessions; a session row must update.
+            for verb in ('UPDATE','DELETE','INSERT'):
+                c.execute('DROP TRIGGER IF EXISTS immutable_claim_sessions_%s' % verb)
             if c.execute('SELECT 1 FROM schema_migrations WHERE version=5').fetchone() is None:
                 c.execute('INSERT INTO schema_migrations(version,name,down,applied_at) VALUES(5,?,?,?)',
                           (MIGRATION_V5_NAME,MIGRATION_V5_DOWN,datetime.now(timezone.utc).isoformat()))

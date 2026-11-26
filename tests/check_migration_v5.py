@@ -56,14 +56,24 @@ def main() -> int:
         assert row is not None and row['chain_head'] == 'abc123', dict(row) if row else None
     print('  PASS v5 read_receipts insert + readback')
 
+    # claim_sessions is mutable operational state: one row per session, updated
+    # on every write.  A plain duplicate insert is a UNIQUE error, an upsert
+    # must update last_write_at/last_claim_id (no IMMUTABLE trigger).
     try:
         with s.transaction() as c:
-            c.execute("INSERT OR REPLACE INTO claim_sessions(session_id, principal, branch, created_at) VALUES(?,?,?,?)",
+            c.execute("INSERT INTO claim_sessions(session_id, principal, branch, created_at) VALUES(?,?,?,?)",
                       ('ses_v5_1', 'someone-else', 'AA', '2026-11-25T00:00:00Z'))
-        raise AssertionError('INSERT OR REPLACE into claim_sessions should be refused')
-    except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
-        assert 'IMMUTABLE' in str(e), f'unexpected error: {e}'
-    print('  PASS v5 claim_sessions immutability')
+        raise AssertionError('duplicate claim_sessions insert should be refused')
+    except sqlite3.IntegrityError as e:
+        assert 'UNIQUE' in str(e).upper(), f'unexpected error: {e}'
+    with s.transaction() as c:
+        c.execute("INSERT INTO claim_sessions(session_id, principal, branch, created_at, last_write_at, last_claim_id) "
+                  "VALUES(?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET last_write_at=excluded.last_write_at, "
+                  "last_claim_id=excluded.last_claim_id",
+                  ('ses_v5_1', 'orchestrator', 'AA', '2026-11-25T00:00:00Z', '2026-11-25T00:05:00Z', 'claim_v5_2'))
+        row = c.execute('SELECT principal, last_claim_id FROM claim_sessions WHERE session_id=?', ('ses_v5_1',)).fetchone()
+        assert row is not None and row['last_claim_id'] == 'claim_v5_2', dict(row) if row else None
+    print('  PASS v5 claim_sessions mutable upsert')
 
     try:
         with s.transaction() as c:
@@ -74,7 +84,8 @@ def main() -> int:
         assert 'IMMUTABLE' in str(e), f'unexpected error: {e}'
     print('  PASS v5 read_receipts immutability')
 
-    print('PASS migration v5: schema_version=%s name=%s ddl=%d stmts tables=%s/%s' % (SCHEMA_VERSION, MIGRATION_V5_NAME, len(MIGRATION_V5_DDL), 'claim_sessions' in IMMUTABLE, 'read_receipts' in IMMUTABLE))
+    print('PASS migration v5: schema_version=%s name=%s ddl=%d stmts mutable_claim_sessions=%s immutable_receipts=%s' % (
+        SCHEMA_VERSION, MIGRATION_V5_NAME, len(MIGRATION_V5_DDL), 'claim_sessions' not in IMMUTABLE, 'read_receipts' in IMMUTABLE))
     return 0
 
 
