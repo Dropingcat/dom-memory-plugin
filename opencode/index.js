@@ -43,6 +43,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createObservability, preview, sha256 } from "./observability.js"
+import { checkReemit, computeFingerprint } from "./gates/tau_gate.js"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PLAN_MAX_AGE_MS = 15 * 60 * 1000
@@ -294,6 +295,49 @@ export async function register(ctx) {
     return result.status === 0
   }
 
+  /* tau-gate: only the *skill block* is gated.  The DOM plan notes stay ungated --
+     they carry the duty-cycle request and must reach the model.  A skill block arrives
+     on the prompt event (from the queue producer); an unchanged fingerprint means the
+     same block would be re-injected, so it is dropped and the idle streak counted.
+     No hard cap: a real change always resets the counter and is emitted (H1). */
+  const skillBlockOf = (event) => {
+    const block = event?.skillBlock ?? event?.step?.skillBlock
+    if (!block || typeof block !== "object") return null
+    const text = typeof block.text === "string" ? block.text.trim() : ""
+    if (!text) return null
+    const step = event?.step ?? {}
+    return {
+      text,
+      state: {
+        stepId: block.stepId ?? block.step_id ?? step.stepId ?? step.step_id ?? step.id ?? "",
+        capSet: block.capSet ?? block.cap_set ?? step.cap ?? step.capSet ?? [],
+        categoryHint: block.categoryHint ?? block.category_hint ?? step.categoryHint ?? step.category_hint ?? "",
+        markers: block.markers ?? step.markers ?? [],
+        planVersion:
+          block.planVersion ?? block.plan_version ?? step.planVersion ?? step.plan_version ?? event?.planVersion ?? 0,
+        indexDigest: block.indexDigest ?? block.index_digest ?? step.indexDigest ?? step.index_digest ?? "",
+      },
+    }
+  }
+
+  const applyTauGate = (sessionID, event) => {
+    const block = skillBlockOf(event)
+    if (!block) return
+    const fingerprint = computeFingerprint(block.state)
+    const { shouldReemit, idleCount } = checkReemit(sessionID || "", fingerprint)
+    if (!shouldReemit) {
+      console.log(`[τ-gate] idle (${idleCount}), block not re-emitted`)
+      return
+    }
+    /* Entry transport first (the host announces it at the next step boundary), the
+       queue -> event.system.push fallback otherwise. */
+    const entry = ctx.session?.instructions?.entry
+    if (typeof entry?.put === "function") entry.put("dom.skill-queue", block.text)
+    else if (typeof entry?.set === "function") entry.set("dom.skill-queue", block.text)
+    else queue(sessionID, block.text)
+    console.log(`[τ-gate] emit fp=${fingerprint.slice(0, 12)}`)
+  }
+
   const executeBefore = async (event, output) => {
     const tool = event?.tool ?? event?.toolID ?? event?.name ?? ""
     if (!GATE_TOOLS.has(tool)) return
@@ -320,6 +364,12 @@ export async function register(ctx) {
     await ctx.session.hook("prompt", (event) => {
       const started = performance.now()
       const sessionID = sessionOf(event)
+      try {
+        applyTauGate(sessionID, event)
+      } catch (caught) {
+        /* advisory: a gate failure never blocks the prompt */
+        console.error("[dom-memory hooks] tau-gate:", caught)
+      }
       let note = ""
       let error = null
       try {

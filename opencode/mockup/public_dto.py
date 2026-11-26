@@ -366,6 +366,15 @@ RECORDS.update({
         'open_conflicts': ('list', ('opaque',)), 'failed': ('list', 'str'),
         'detail': ('opaque',), 'review': ('null', ('opaque',)), 'repaired': 'bool', 'next_steps': ('list', 'NextStep'),
     },
+    # Read-only skill router (dom_skill_select): every field is derived data, no ledger
+    # proof is involved.  ``signals`` maps a queued skill id to its consensus signals.
+    'SkillSelection': {
+        'status': 'str', 'step_id': 'str', 'plan_version': 'int', 'index_digest': 'str',
+        'fingerprint': 'str', 'block': 'str',
+        'queue': ('list', 'str'), 'advisory': ('list', 'str'), 'gaps': ('list', 'str'),
+        'prefetch': ('list', 'str'), 'missing_caps': ('list', 'str'), 'groups': ('list', 'str'),
+        'confidence_bp': 'int', 'signals': ('map', ('list', 'str')),
+    },
 })
 
 # tool -> top-level public schema (healthy or fixed error surface)
@@ -401,6 +410,7 @@ LITE_RESPONSES = {
     'dom_annotate': ('Annotated', ('ANNOTATED',)),
     'dom_distillate': ('DistillateState', ('DISTILLATE_SHOWN', 'PROPOSED', 'ALREADY_RECORDED', 'VALIDATED',
                                            'REVIEW_FAILED', 'ACCEPTED', 'WITHDRAWN', 'DISPUTED', 'RESOLVED')),
+    'dom_skill_select': ('SkillSelection', ('SKILLS_SELECTED',)),
 }
 DOMAIN_ERROR_FIELDS = frozenset(RECORDS['DomainError'])
 
