@@ -5,9 +5,14 @@
 
 .DESCRIPTION
     Sets OPENCODE_CONFIG to <repo>/opencode/opencode.dev.json for the duration of one
-    `opencode-cli run` call. The dev config loads ONLY the project plugin and the project
-    dom-memory MCP server, so the globally installed DOM plugin (same id: dom-memory.hooks)
-    cannot win plugin de-duplication.
+    `opencode-cli run` call. The dev config declares ONLY the project plugin and the project
+    dom-memory MCP server. OpenCode 2.x merges config layers (global, parent project, project,
+    OPENCODE_CONFIG), so other plugins may still load; what matters is which copy wins the
+    `dom-memory.hooks` id. Check the startup line printed by the plugin:
+
+        [dom-memory hooks] root=<repo>\opencode project=<repo> planDir=<...>
+
+    root must point at <repo>/opencode, otherwise a global dist build won de-duplication.
 
     OPENCODE_CONFIG is restored (or removed, if it was unset) after the run.
 

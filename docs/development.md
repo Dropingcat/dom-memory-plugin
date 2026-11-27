@@ -1,7 +1,8 @@
 # Разработка DOM Memory plugin
 
-Документ для тех, кто правит сам плагин и хочет проверять его в живой сессии OpenCode,
-не ломая пользовательскую установку и не задевая глобальный DOM-плагин.
+Документ для тех, кто правит сам плагин и хочет проверять его в живой сессии
+OpenCode, не ломая пользовательскую установку и не путая проектный плагин с
+глобальной сборкой.
 
 ---
 
@@ -24,7 +25,8 @@ powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok"
    `opencode-cli run --standalone --print-logs --auto --format json --model <model> <prompt>`
    с рабочей директорией `<repo>`;
 5. в `finally` восстанавливает прежнее значение `OPENCODE_CONFIG`
-   (или удаляет переменную, если она не была задана).
+   (или удаляет переменную, если она не была задана);
+6. печатает путь активного конфига и предупреждение о глобальном плагине.
 
 Параметры:
 
@@ -32,7 +34,10 @@ powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok"
 |----------|--------------|------------|
 | `-Model` | `polza/deepseek/deepseek-v4.1-flash-1017` | модель в форме `provider/model` |
 | `-Prompt` | — | сообщение пользователя |
-| `$args` (позиционные) | — | пробрасываются в `opencode-cli run` (например `--agent explore`) |
+| остальные аргументы | — | пробрасываются в `opencode-cli run` (например `--agent explore`) |
+
+Первый позиционный аргумент — это `-Model`, поэтому промпт всегда передавайте
+именованным `-Prompt`.
 
 Примеры:
 
@@ -40,80 +45,106 @@ powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok"
 # Другая модель
 powershell -File tools/run_dev_session.ps1 -Model polza/deepseek/deepseek-v4.1-pro -Prompt "Reply: ok"
 
-# Позиционный промпт и проброс флага
-powershell -File tools/run_dev_session.ps1 "Reply: ok" --agent explore
+# Флаг прокидывается в opencode-cli run
+powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok" --agent explore
 ```
-
-Скрипт печатает путь активного конфига и предупреждение, что глобальный DOM-плагин обойдён.
-Вывод `opencode-cli` (stdout — JSON-события, stderr — логи) ретранслируется после
-завершения процесса, в исходной кодировке UTF-8; интерактивного стриминга нет —
-это осознанно, чтобы длинные marker-строки не рвались переносом.
 
 ---
 
 ## 2. Зачем нужен `OPENCODE_CONFIG`
 
 Глобально установленный DOM-плагин и проектный плагин объявляют **один и тот же**
-`id: dom-memory.hooks`. При дедупликации плагинов OpenCode оставляет один экземпляр —
-и это не обязательно тот, который вы правите. В результате live-тест молча запускает
-старую глобальную сборку.
+`id: dom-memory.hooks`. OpenCode оставляет для этого id **один** экземпляр, и это
+не обязательно та сборка, которую вы правите. Без явной проверки live-тест может
+молча запустить старую глобальную `dist`-сборку.
 
-`opencode/opencode.dev.json` решает это так:
+`opencode/opencode.dev.json` даёт один предсказуемый источник истины:
 
 * в `plugins` ровно один entry — проектный плагин
   `file:///E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/opencode`;
-* глобальные плагины (harness, paper-review и пр.) в конфиг не попадают;
-* MCP-сервер `dom-memory` указывает на `opencode/scripts/dom_server.py` этого же репозитория.
+* MCP-сервер `dom-memory` указывает на `opencode/scripts/dom_server.py` этого же
+  репозитория;
+* в `environment` задан `OPENCODE_PROJECT_DIR=<repo>`, то есть память пишется в
+  репозиторий плагина, а не в чужой проект.
 
-`OPENCODE_CONFIG` применяется к запуску как приоритетный слой: entry из dev-конфига
-разбирается после конфигурации хоста, поэтому при совпадении `id` проектный плагин
-выигрывает дедупликацию, а не глобальный `dist`-бандл.
-
-Оговорка: OpenCode всё равно читает источники хоста — глобальный каталог
-`OPENCODE_CONFIG_DIR` и проектные `.opencode`-конфиги. Поэтому в логах могут
-появиться и другие плагины, а глобальный DOM-плагин может быть загружен и затем
-отброшен при дедупликации. Единственный надёжный индикатор того, кто реально
-активен, — marker-строка `[dom-memory hooks] root=... project=...` (раздел 3).
-
-Проверить конфиг можно без запуска модели:
+Важное уточнение про OpenCode 2.3.0: конфигурация **многослойная**, и
+`OPENCODE_CONFIG` добавляет слой, а не отключает остальные. Список реально
+прочитанных документов показывает
 
 ```powershell
-Get-Content opencode/opencode.dev.json | ConvertFrom-Json | Out-Null
+opencode debug config
+```
+
+В типичном запуске на этой машине в списке есть глобальный
+`%USERPROFILE%\.config\opencode\opencode.jsonc`, конфиги родительских каталогов
+(`E:\opencode_harness_portable\.opencode\opencode.json`) и конфиг проекта
+(`<repo>\.opencode\opencode.json`) — плагины и MCP-серверы из них продолжают
+загружаться. Поэтому dev-конфиг **не** «выключает» остальные плагины; он
+фиксирует, какой экземпляр `dom-memory` объявлен для этого репозитория, и
+позволяет не править пользовательский конфиг руками.
+
+Практический вывод: после запуска обязательно проверяйте, какой экземпляр хуков
+победил (§3). Если в строке виден `dist`-путь, значит победила глобальная сборка,
+и тест недостоверен.
+
+Проверить сам файл без запуска модели:
+
+```powershell
+Get-Content opencode/opencode.dev.json -Raw | ConvertFrom-Json | Out-Null
 ```
 
 ---
 
 ## 3. Как убедиться, какой плагин активен
 
-Плагин печатает в stderr строку при инициализации:
+При инициализации плагин печатает в stderr:
 
 ```
-[dom-memory hooks] root=<repo>/opencode project=<repo> planDir=...
+[dom-memory hooks] root=<repo>\opencode project=<repo> planDir=<...>
 ```
 
 `--print-logs` в `run_dev_session.ps1` уже включён. Ищите строку в выводе:
 
 ```powershell
-powershell -File tools/run_dev_session.ps1 -Prompt "Reply: ok" 2>&1 |
+powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok" 2>&1 |
     Select-String "\[dom-memory hooks\]"
 ```
 
-* `root` должен указывать на `<repo>/opencode` — значит загружен проектный плагин,
-  а не глобальный `dist`-бандл;
-* `project` должен указывать на корень репозитория плагина;
-* если строки нет вовсе — плагин не загрузился (проверьте `OPENCODE_CONFIG`,
-  путь в `plugins[0].package` и наличие `opencode/index.js`).
+Как читать:
+
+| Что видно | Значение |
+|-----------|----------|
+| `root=<repo>\opencode` | активен проектный плагин из репозитория — тест достоверен |
+| `root=...\dist\...` или путь в другом проекте | победила глобальная/чужая сборка — тест недостоверен |
+| строки нет вовсе | плагин не загрузился: проверьте `OPENCODE_CONFIG`, путь в `plugins[].package`, наличие `opencode/index.js` |
+| `disabled by options.enabled=false` | плагин выключен опцией конфига |
+
+Дополнительно:
+
+* `opencode debug config` — какие документы конфигурации реально прочитаны;
+* `opencode mcp list` — какие MCP-серверы сконфигурированы и их статус;
+* `mcp transport error ... exited with code 1` в конце сессии — штатный шум
+  завершения: так завершаются все MCP-серверы при выходе, а не только
+  `dom-memory`.
 
 ---
 
 ## 4. Куда пишется память
 
-Приоритет источников (см. `opencode/mockup/paths.py`):
+Резолвер один для MCP-сервера, хуков и монитора (`opencode/mockup/paths.py`).
 
-1. явный `--directory` / `DOM_DIRECTORY` (run-директория);
-2. `DOM_RUNTIME_ROOT` (корень рантайма, обычно родитель run-директории);
-3. `OPENCODE_PROJECT_DIR` — корень проекта;
-4. значение по умолчанию — `<project>/.dom-memory/main`.
+Проект (по убыванию приоритета):
+
+1. `DOM_PROJECT_DIR`;
+2. `OPENCODE_PROJECT_DIR`;
+3. `CLAUDE_PROJECT_DIR`;
+4. `HERMES_PROJECT_DIR`;
+5. текущая директория процесса.
+
+Корень данных: `DOM_RUNTIME_ROOT` либо `<project>/.dom-memory`.
+Директория запуска: `--directory` / `DOM_DIRECTORY` либо `<root>/main`.
+База: `<run>/dom.sqlite3`, по умолчанию
+`<project>/.dom-memory/main/dom.sqlite3`.
 
 В `opencode/opencode.dev.json` задано:
 
@@ -121,19 +152,29 @@ powershell -File tools/run_dev_session.ps1 -Prompt "Reply: ok" 2>&1 |
 "environment": { "OPENCODE_PROJECT_DIR": "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin" }
 ```
 
-то есть live-база ляжет в
+поэтому live-база ляжет в
 `E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/.dom-memory/main/dom.sqlite3`.
+Наблюдаемость (`observability/`, `prompts/`) — рядом, в `<project>/.dom-memory/observability`.
 
-Чтобы направить конкретный запуск в другую директорию, передайте MCP-серверу `--directory`
-(правка `command` в конфиге) либо задайте `DOM_DIRECTORY` в окружении.
-Явная директория должна сопровождаться корректным `DOM_RUNTIME_ROOT`, иначе
+Явный каталог запуска:
+
+* опция плагина `"directory": "..."` — плагин сам выставляет `DOM_DIRECTORY` и
+  `DOM_RUNTIME_ROOT=<dirname>`;
+* переменные `DOM_DIRECTORY` + `DOM_RUNTIME_ROOT` в `environment` у MCP-сервера.
+
+`dom_server.py` не принимает `--directory` флагом: каталог приходит только через
+окружение. Если задать `DOM_DIRECTORY` без согласованного `DOM_RUNTIME_ROOT`,
 `mockup.admission` откажет с `RUNTIME_PATH_REQUIRED`.
+
+Позиционный `--directory` самого `opencode-cli` — это рабочая директория сессии;
+она используется как fallback для `projectDir`, если ни опция, ни переменные не
+заданы.
 
 ---
 
 ## 5. Откат live-базы после теста
 
-Перед экспериментами сохраните текущую базу:
+Live-тест пишет в настоящий ledger, поэтому перед экспериментами сохраните базу:
 
 ```powershell
 $run = "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/.dom-memory/main"
@@ -142,7 +183,8 @@ New-Item -ItemType Directory -Force -Path $backup | Out-Null
 Copy-Item "$run\*" $backup -Recurse -Force
 ```
 
-Откат:
+Откат (сначала закройте сессии, которые держат эту базу открытой — SQLite не
+любит подмену файла под живым соединением):
 
 ```powershell
 $run = "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/.dom-memory/main"
@@ -151,8 +193,8 @@ $backup = Get-ChildItem "C:\Temp\opencode" -Directory -Filter "dom-live-backup-*
 Copy-Item "$($backup.FullName)\*" $run -Recurse -Force
 ```
 
-Каталог `C:\Temp\opencode` — единственное место, где dev-процесс зависит от `C:\Temp`,
-и только для ручных бэкапов. Репозиторий от него не зависит.
+Каталог `C:\Temp\opencode` — единственное место, где dev-процесс зависит от
+`C:\Temp`, и только для ручных бэкапов; сам репозиторий от него не зависит.
 
 Если база не нужна, её можно просто удалить: она пересоздастся первым хуком
 (`.dom-memory/main/dom.sqlite3`). Ledger append-only и хеш-цепочный, поэтому
@@ -168,23 +210,30 @@ Copy-Item "$($backup.FullName)\*" $run -Recurse -Force
 powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok" --agent explore
 ```
 
-Или напрямую, не забыв про переменную:
+Или напрямую, не забыв про переменную и восстановление:
 
 ```powershell
+$previous = $env:OPENCODE_CONFIG
 $env:OPENCODE_CONFIG = "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/opencode/opencode.dev.json"
-opencode-cli run --standalone --print-logs --auto --format json --agent explore "Reply with exactly: ok"
-Remove-Item Env:OPENCODE_CONFIG
+try {
+    opencode-cli run --standalone --print-logs --auto --format json --agent explore "Reply with exactly: ok"
+}
+finally {
+    if ($null -eq $previous) { Remove-Item Env:OPENCODE_CONFIG -ErrorAction SilentlyContinue }
+    else { $env:OPENCODE_CONFIG = $previous }
+}
 ```
 
-Проверка та же: в stderr должна быть строка `[dom-memory hooks] root=<repo>/opencode project=<repo>`.
+Проверка та же: в stderr должна быть строка
+`[dom-memory hooks] root=<repo>\opencode project=<repo>`.
 
 ---
 
 ## 7. Ограничение
 
-`opencode/opencode.dev.json` — инструмент **разработки плагина**. Он жёстко привязан к
-путям этой машины и грузит только проектный плагин, поэтому не предназначен для
-распространения.
+`opencode/opencode.dev.json` — инструмент **разработки плагина**. Он жёстко
+привязан к путям этой машины и грузит только проектный плагин, поэтому не
+предназначен для распространения.
 
-Для пользователей штатный путь установки — `dom install --project`, который появится
-в версии **0.3.2** и сам создаст корректный конфиг с нужными путями.
+Для пользователей штатный путь установки — `dom install --project`, который
+появится в версии **0.3.2** и сам создаст корректный конфиг с нужными путями.
