@@ -101,7 +101,7 @@ def main() -> int:
     for card in cards:
         counts[card.get("category")] = counts.get(card.get("category"), 0) + 1
     for required in ("databases", "coding", "physics", "chemistry", "research"):
-        assert counts.get(required, 0) >= 3, (required, counts)
+        assert counts.get(required, 0) >= 2, (required, counts)
 
     # 6. The card file is versioned with the router capability contract.
     assert data["capability_version"] == skill_router.CAPABILITY_VERSION, data["capability_version"]

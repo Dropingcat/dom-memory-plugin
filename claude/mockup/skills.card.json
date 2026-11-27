@@ -1,0 +1,165 @@
+{
+  "capability_version": 1,
+  "cards": [
+    {
+      "id": "dom-memory",
+      "name": "DOM Memory Plugin",
+      "category": "databases",
+      "provides": ["ledger", "sqlite", "planning"],
+      "state": "verified",
+      "evidence": "v0.3.0 engine; tests/check_receipts.py PASS, tests/check_migration_v5.py PASS"
+    },
+    {
+      "id": "sqlite-migration",
+      "name": "SQLite Migration",
+      "category": "databases",
+      "provides": ["sqlite", "migration"],
+      "state": "verified",
+      "evidence": "tests/check_migration_v5.py PASS"
+    },
+    {
+      "id": "claim-ledger",
+      "name": "Claim Ledger",
+      "category": "databases",
+      "provides": ["ledger", "review"],
+      "state": "verified",
+      "evidence": "tests/check_gate.py PASS; hash chain in .dom-memory"
+    },
+    {
+      "id": "test-driven-development",
+      "name": "Test-Driven Development",
+      "category": "coding",
+      "provides": ["testing"],
+      "state": "verified",
+      "evidence": "used by all tests/check_*.py; 23 test groups PASS"
+    },
+    {
+      "id": "systematic-debugging",
+      "name": "Systematic Debugging",
+      "category": "coding",
+      "provides": ["runtime", "debugging"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "verification-before-completion",
+      "name": "Verification Before Completion",
+      "category": "coding",
+      "provides": ["testing", "review"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "code-review-and-quality",
+      "name": "Code Review and Quality",
+      "category": "review",
+      "provides": ["review"],
+      "state": "verified",
+      "evidence": "used for docs/DOM_CODE_AUDIT_0.2.4.md (2026-11-27)"
+    },
+    {
+      "id": "doubt-driven-development",
+      "name": "Doubt-Driven Development",
+      "category": "review",
+      "provides": ["review", "testing"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "verify",
+      "name": "Verify",
+      "category": "review",
+      "provides": ["review", "testing"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "writing-plans",
+      "name": "Writing Plans",
+      "category": "writing",
+      "provides": ["docs", "prompt", "planning"],
+      "state": "verified",
+      "evidence": "used for docs/superpowers/plans/2026-11-19-semantic-bridge-0.2.5.md"
+    },
+    {
+      "id": "writer-core",
+      "name": "Writer Core",
+      "category": "writing",
+      "provides": ["writer", "docs"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "sources",
+      "name": "Sources",
+      "category": "research",
+      "provides": ["docs", "review", "research"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "brainstorming",
+      "name": "Brainstorming",
+      "category": "research",
+      "provides": ["research", "prompt"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "literature-review",
+      "name": "Literature Review",
+      "category": "research",
+      "provides": ["research", "docs"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "pde-solver",
+      "name": "PDE Solver",
+      "category": "physics",
+      "provides": ["physics", "runtime"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "fluid-dynamics",
+      "name": "Fluid Dynamics",
+      "category": "physics",
+      "provides": ["physics", "simulation"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "dynamical-systems",
+      "name": "Dynamical Systems",
+      "category": "physics",
+      "provides": ["physics", "simulation"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "rdkit",
+      "name": "RDKit",
+      "category": "chemistry",
+      "provides": ["chemistry", "molecule"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    },
+    {
+      "id": "pubchem-database",
+      "name": "PubChem Database",
+      "category": "databases",
+      "provides": ["chemistry", "databases"],
+      "state": "verified",
+      "evidence": "provides curated from skill description; SKILL.md category=databases (2026-11-27)"
+    },
+    {
+      "id": "admet-prediction",
+      "name": "ADMET Prediction",
+      "category": "chemistry",
+      "provides": ["chemistry", "toxicity"],
+      "state": "verified",
+      "evidence": "provides curated from skill description (2026-11-27)"
+    }
+  ]
+}

@@ -148,10 +148,10 @@
     {
       "id": "pubchem-database",
       "name": "PubChem Database",
-      "category": "chemistry",
+      "category": "databases",
       "provides": ["chemistry", "databases"],
       "state": "verified",
-      "evidence": "provides curated from skill description (2026-11-27)"
+      "evidence": "provides curated from skill description; SKILL.md category=databases (2026-11-27)"
     },
     {
       "id": "admet-prediction",
