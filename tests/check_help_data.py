@@ -124,6 +124,25 @@ def known_error_codes() -> set[str]:
     return codes
 
 
+def mockup_source() -> str:
+    """All mockup/ sources, concatenated: the grep target for status strings."""
+    return '\n'.join(path.read_text(encoding='utf-8')
+                     for path in sorted((OPENCODE / 'mockup').glob('*.py')))
+
+
+def code_in_source(code: str, source: str) -> bool:
+    """True when *code* appears in the sources as a quoted status string."""
+    return re.search(r"['\"]%s['\"]" % re.escape(code), source) is not None
+
+
+def referenced_codes() -> set[str]:
+    """All common_errors[].code values named across the HELP_DATA entries."""
+    return {error['code']
+            for entry in HELP_DATA.values() if isinstance(entry, dict)
+            for error in entry.get('common_errors') or []
+            if isinstance(error, dict) and isinstance(error.get('code'), str)}
+
+
 def check() -> list[str]:
     problems: list[str] = []
 
@@ -211,6 +230,16 @@ def check() -> list[str]:
             else:
                 helps[help_text] = tool
 
+    # Every code named in HELP_DATA.common_errors must be greppable in the
+    # server sources as a quoted status string: help must describe real
+    # refusals, never a name that only exists in this table.
+    source = mockup_source()
+    mentioned = referenced_codes()
+    absent_in_source = sorted(code for code in mentioned if not code_in_source(code, source))
+    if absent_in_source:
+        problems.append('common_errors codes not found as status strings in mockup/: %s'
+                        % ', '.join(absent_in_source))
+
     return problems
 
 
@@ -223,8 +252,10 @@ def main() -> int:
         return 1
     strict = len(server_mod.STRICT_TOOL_NAMES)
     lite = len(server_mod.LITE_TOOL_NAMES)
-    print('PASS check_help_data: %d tools covered (%d strict, %d lite, union %d)'
-          % (len(HELP_DATA), strict, lite, len(server_mod.ALL_TOOL_NAMES)))
+    print('PASS check_help_data: %d tools covered (%d strict, %d lite, union %d); '
+          '%d error codes greppable in mockup/'
+          % (len(HELP_DATA), strict, lite, len(server_mod.ALL_TOOL_NAMES),
+             len(referenced_codes())))
     return 0
 
 

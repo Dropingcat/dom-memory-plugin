@@ -43,6 +43,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createObservability, preview, sha256 } from "./observability.js"
+import { applyHelpGate } from "./gates/help_gate.js"
 import { checkReemit, computeFingerprint } from "./gates/tau_gate.js"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -359,6 +360,29 @@ export async function register(ctx) {
 
   const registrations = []
 
+  /* Error help: a failed DOM call injects an actionable help line as the
+     `dom-help` instruction entry.  Advisory only — the error itself is never
+     masked, and a gate failure never throws into the host. */
+  const executeAfter = (event, output) => {
+    let result
+    try {
+      result = applyHelpGate(event, output)
+    } catch (caught) {
+      console.error("[dom-memory hooks] help-gate:", caught)
+      return
+    }
+    if (!result) return
+    const text = `⚠️ ${result.tool} failed. ${result.help}`
+    try {
+      const entry = ctx.session?.instructions?.entry
+      if (typeof entry?.put === "function") entry.put("dom-help", text)
+      else if (typeof entry?.set === "function") entry.set("dom-help", text)
+      else console.warn(`[dom-memory hooks] help-gate: no instruction entry for ${result.tool}`)
+    } catch (caught) {
+      console.error("[dom-memory hooks] help-gate:", caught)
+    }
+  }
+
   /* Claude UserPromptSubmit: the duty cycle runs on every user prompt. */
   registrations.push(
     await ctx.session.hook("prompt", (event) => {
@@ -468,6 +492,7 @@ export async function register(ctx) {
      the invariant even when this hook is absent or forged around. */
   if (ctx.tool?.hook) {
     registrations.push(await ctx.tool.hook("execute.before", executeBefore))
+    registrations.push(await ctx.tool.hook("execute.after", executeAfter))
   }
 
   return () => {

@@ -614,6 +614,29 @@ HELP_DATA: dict[str, dict] = {
                  '4) Учесть gaps/missing_caps: если нужного скила нет, не выдумывать его. '
                  '5) Помнить: вызов read-only, ledger не трогает.'),
     },
+    'dom_help': {
+        'usage': 'dom_help(tool)',
+        'preconditions': [
+            'Известно имя инструмента либо его нужно выбрать из списка доступных',
+            'Проект, identity и ledger не нужны: вызов read-only',
+        ],
+        'postconditions': [
+            'Получена справка: usage, preconditions, postconditions, common_errors и help',
+            'В ledger ничего не записано: вызов можно повторять свободно',
+        ],
+        'common_errors': [
+            {'code': 'INVALID_FIELD',
+             'cause': 'tool не найден среди зарегистрированных инструментов',
+             'fix': 'взять имя из списка доступных инструментов или из dom_describe'},
+            {'code': 'INVALID_ARGUMENTS',
+             'cause': 'tool не передан или передан не строкой',
+             'fix': 'вызывать dom_help({"tool": "dom_claim"})'},
+        ],
+        'help': ('Тебе НУЖНО: 1) Передать имя инструмента в tool, например dom_claim, dom_find, dom_update. '
+                 '2) Прочитать usage, preconditions и common_errors — там написано, что сделать до и после вызова. '
+                 '3) При ошибке любого инструмента вызвать dom_help с его именем и выполнить шаги из help. '
+                 '4) Помнить: вызов read-only, ledger не меняется.'),
+    },
     'dom_init': {
         'usage': 'dom_init(external_work_ref, policy_digest)',
         'preconditions': [

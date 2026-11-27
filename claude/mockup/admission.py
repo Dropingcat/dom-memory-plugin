@@ -46,25 +46,43 @@ def storage_error(error):
     elif primary==sqlite3.SQLITE_CONSTRAINT: status='STORAGE_CONSTRAINT'
     elif primary==sqlite3.SQLITE_ERROR and ('no such table' in str(error) or 'no such column' in str(error)): status='MIGRATION_REQUIRED'
     else: status='STORAGE_UNAVAILABLE'
-    return {'status':status,'error':{'code':status,'sqlite_code':code,'sqlite_name':getattr(error,'sqlite_errorname',None)}}
+    return {'status':status,'error':{'code':status,'sqlite_code':code,'sqlite_name':getattr(error,'sqlite_errorname',None)},
+            'help':public_dto.error_help(status,'lite')['help']}
 
 class Denied(Exception):
     """Typed refusal.  ``extra`` carries values the caller already owns (own branch
     names, a field name, a claim id) into the public DomainError; it is empty for
-    every refusal that existed before WR-ADD."""
+    every refusal that existed before WR-ADD.  ``help`` is advisory: ``guarded``
+    fills it from HELP_DATA / the status table when a raise does not set it."""
     def __init__(self,status,**extra):
         super().__init__(status); self.extra=extra
 
 _UNSET=object()
 
+def _help(status,tool=None,text=None):
+    """Actionable Russian ``help`` for a refusal (never empty, <=500 chars)."""
+    return public_dto.error_help(status,'lite',tool=tool,help_text=text)['help']
+
 def guarded(fn):
     @wraps(fn)
     def run(*a,**kw):
-        try: return fn(*a,**kw)
+        try: out=fn(*a,**kw)
         except IntegrityFailure as e: return public_dto.broken(e.result)
-        except Denied as e: return dict({'status':str(e)},**e.extra)
-        except MigrationRequired as e: return {'status':str(e)}
+        except Denied as e:
+            extra=dict(e.extra)
+            extra.setdefault('help',_help(str(e)))
+            return dict({'status':str(e)},**extra)
+        except MigrationRequired as e: return {'status':str(e),'help':_help(str(e))}
         except sqlite3.DatabaseError as e: return storage_error(e)
+        # A refusal returned as a plain DomainError shape gets the same advisory
+        # help as a raised one.  Richer results (Rejected/UpdateConflict/...) are
+        # projected by their own closed record, which adds help itself, so they
+        # are left untouched here.
+        if (isinstance(out,dict) and 'help' not in out and set(out) <= public_dto.DOMAIN_ERROR_FIELDS):
+            status=out.get('status')
+            if isinstance(status,str) and status in public_dto.KNOWN_REFUSALS:
+                out=dict(out,help=_help(status))
+        return out
     return run
 
 HASH_SCHEME=2
@@ -394,7 +412,7 @@ class Service:
         self.scope(); self.capability('submit'); self.ready()
         try: p=strict_loads(payload_json)
         except (ValueError,TypeError): return {'status':'REJECTED','accepted_count':0,'errors':[{'local_id':None,'path':'$','code':'INVALID_JSON','required':True,'fix':'Use restricted JSON.'}],'rejected_local_ids':[]}
-        if type(p) is not dict: raise Denied('REJECTED')
+        if type(p) is not dict: raise Denied('REJECTED',help=_help('REJECTED','dom_submit'))
         if type(p.get('branch')) is not str or type(p.get('external_work_ref')) is not str:
             errors=validate(p,self.known_branches()) or [{'local_id':None,'path':'$.branch','code':'INVALID_TYPE','required':True,'fix':'Supply schema-conforming field; no coercion.'}]
             return {'status':'REJECTED','accepted_count':0,'errors':errors,'rejected_local_ids':[]}
@@ -402,12 +420,12 @@ class Service:
         for branch in p.get('dependencies',{}) if type(p.get('dependencies')) is dict else []: self.scope(branch)
         errors=validate(p,self.known_branches())
         if errors: return {'status':'REJECTED','accepted_count':0,'errors':errors,'rejected_local_ids':[i.get('local_id') for i in p.get('items',[]) if isinstance(i,dict)]}
-        if p['external_task_ref']!=self.task: raise Denied('SCOPE_DENIED')
-        if p['policy_digest']!=self.policy: raise Denied('POLICY_MISMATCH')
+        if p['external_task_ref']!=self.task: raise Denied('SCOPE_DENIED',help=_help('SCOPE_DENIED','dom_submit'))
+        if p['policy_digest']!=self.policy: raise Denied('POLICY_MISMATCH',help=_help('POLICY_MISMATCH','dom_submit'))
         for i in p['items']:
             for branch in i.get('applicability',[]): self.scope(branch)
-            if i.get('event_type')=='exclude' and 'owner' not in self.context.capabilities: raise Denied('OWNER_AUTHORITY_REQUIRED')
-            if i.get('event_type')=='applicability' and i['value']['branch']!=p['branch']: raise Denied('SCOPE_DENIED')
+            if i.get('event_type')=='exclude' and 'owner' not in self.context.capabilities: raise Denied('OWNER_AUTHORITY_REQUIRED',help=_help('OWNER_AUTHORITY_REQUIRED','dom_submit'))
+            if i.get('event_type')=='applicability' and i['value']['branch']!=p['branch']: raise Denied('SCOPE_DENIED',help=_help('SCOPE_DENIED','dom_submit'))
         with self.store.read() as c: self.check_references(c,p)
         q=normalized(p,self.context.principal,self.context.root); d=digest(q)
         # L8: the candidate names the (trusted) session that submitted it; a
@@ -434,15 +452,15 @@ class Service:
         scoped={cl['claim_id'] for cl in snapshot(c,p['branch'],self.head(c,p['branch']))['claims']}
         for i in p['items']:
             cid=i['claim_ref']; ev=i['event_type']
-            if cid and cid not in (visible if ev=='applicability' else scoped): raise Denied('SCOPE_DENIED')
-            if ev=='replacement' and i['value']['replacement_ref'] not in scoped: raise Denied('SCOPE_DENIED')
+            if cid and cid not in (visible if ev=='applicability' else scoped): raise Denied('SCOPE_DENIED',help=_help('SCOPE_DENIED'))
+            if ev=='replacement' and i['value']['replacement_ref'] not in scoped: raise Denied('SCOPE_DENIED',help=_help('SCOPE_DENIED'))
             if i['supersedes']:
                 row=c.execute('SELECT branch,claim_ref FROM events WHERE id=?',(i['supersedes'],)).fetchone()
-                if not row or row['branch']!=p['branch'] or row['claim_ref']!=cid: raise Denied('SCOPE_DENIED')
+                if not row or row['branch']!=p['branch'] or row['claim_ref']!=cid: raise Denied('SCOPE_DENIED',help=_help('SCOPE_DENIED'))
     def candidate(self,c,ref):
         row=c.execute('SELECT * FROM candidates WHERE id=?',(ref,)).fetchone()
         # QA004 F-22: lite says "no such candidate" (as NO_SUCH_CLAIM), not "adopt the database"
-        if not row: raise Denied('NO_SUCH_CANDIDATE' if self.lite else 'SCOPE_DENIED')
+        if not row: raise Denied('NO_SUCH_CANDIDATE' if self.lite else 'SCOPE_DENIED',help=_help('NO_SUCH_CANDIDATE' if self.lite else 'SCOPE_DENIED','dom_candidate'))
         self.scope(row['branch'])
         p=json.loads(row['payload'])
         for b in p['dependencies']: self.scope(b)
@@ -451,7 +469,8 @@ class Service:
     def candidate_view(self,candidate_id):
         """Audit 2026-11-12 #5: a reviewer reads the exact candidate before deciding."""
         self.capability('review'); self.ready()
-        if type(candidate_id) is not str or not candidate_id: raise Denied('INVALID_FIELD',field='candidate_id')
+        if type(candidate_id) is not str or not candidate_id: raise Denied('INVALID_FIELD',field='candidate_id',
+            help=_help('INVALID_FIELD','dom_candidate','Тебе НУЖНО: 1) Взять candidate_id из dom_submit/dom_extract/dom_resume. 2) Передать его непустой строкой. 3) Повторить вызов.'))
         with self.store.read() as c:
             row,p=self.candidate(c,candidate_id)
             last=c.execute('SELECT payload FROM reviews WHERE candidate=? ORDER BY rowid DESC LIMIT 1',(candidate_id,)).fetchone()
@@ -473,15 +492,18 @@ class Service:
     def review(self,candidate_id,intent_digest,decision='approve',note=None,_internal=False,session=_UNSET):
         self.capability('review'); self.ready()
         # 'superseded' is written only by dom_accept when it rebases a stale candidate.
-        if decision not in ('approve','reject') and not (_internal and decision=='superseded'): raise Denied('INVALID_FIELD',field='decision')
-        if note is not None and (type(note) is not str or len(note)>4000): raise Denied('INVALID_FIELD',field='note')
-        if decision=='reject' and not (note or '').strip(): raise Denied('INVALID_FIELD',field='note',hint='A rejection needs a note saying why (it is recorded with the review).')
+        if decision not in ('approve','reject') and not (_internal and decision=='superseded'): raise Denied('INVALID_FIELD',field='decision',
+            help=_help('INVALID_FIELD','dom_review','Тебе НУЖНО: 1) Передать decision=approve или decision=reject. 2) Для reject добавить непустой note. 3) Повторить вызов.'))
+        if note is not None and (type(note) is not str or len(note)>4000): raise Denied('INVALID_FIELD',field='note',
+            help=_help('INVALID_FIELD','dom_review','Тебе НУЖНО: 1) Передать note строкой до 4000 символов. 2) Убрать лишнее из текста. 3) Повторить вызов.'))
+        if decision=='reject' and not (note or '').strip(): raise Denied('INVALID_FIELD',field='note',hint='A rejection needs a note saying why (it is recorded with the review).',
+            help=_help('INVALID_FIELD','dom_review','Тебе НУЖНО: 1) Написать в note причину отклонения. 2) Передать decision=reject вместе с note. 3) Повторить вызов.'))
         with self.store.read() as c:
             row,p=self.candidate(c,candidate_id)
             # Lite (local_single_owner): author and reviewer are the same local owner; the
             # record is then honestly labelled 'self'.  Strict still refuses same-root review.
-            if row['root']==self.context.root and self.independent: raise Denied('INDEPENDENCE_NOT_ENFORCED')
-            if row['digest']!=intent_digest: raise Denied('DIGEST_MISMATCH')
+            if row['root']==self.context.root and self.independent: raise Denied('INDEPENDENCE_NOT_ENFORCED',help=_help('INDEPENDENCE_NOT_ENFORCED','dom_review'))
+            if row['digest']!=intent_digest: raise Denied('DIGEST_MISMATCH',help=_help('DIGEST_MISMATCH','dom_review'))
             level='self' if row['root']==self.context.root else 'independent'
             review=dict(review_level=level,candidate_digest=intent_digest,snapshot_digest=digest(p['dependencies']),dependencies=p['dependencies'],expected_revision=p['expected_branch_revision'],policy=p['policy_digest'],reviewer=self.context.principal,root=self.context.root,decision=decision,note=note or '',simulated=True,proof_ref='launcher-fixture-only')
         rid=str(uuid.uuid4())
@@ -527,7 +549,9 @@ class Service:
         if missing:
             raise Denied('GATE_NO_READ',hint=(
                 'This write stands on claim(s) this session has not read: %s. Read them first (dom_find / dom_context). '
-                'The trusted-write gate is advisory in 0.3.0 and writes nothing without a read receipt.' % ', '.join(missing[:3])))
+                'The trusted-write gate is advisory in 0.3.0 and writes nothing without a read receipt.' % ', '.join(missing[:3])),
+                help=('Тебе НУЖНО: 1) Вызвать dom_find или dom_context для каждого claim в basis. '
+                      '2) Получить read receipt. 3) Повторить вызов.'))
     def _gate_write(self,basis):
         """Run the L6 gate in its own transaction before the delegated write."""
         if not self.store.path.exists(): return
@@ -586,24 +610,26 @@ class Service:
             self.integrity_gate(c)
             row,p=self.candidate(c,candidate_id)
             # WS-F02 L1: candidate digest vs claimed intent BEFORE any cache lookup.
-            if row['digest']!=intent_digest or digest(p)!=intent_digest: raise Denied('DIGEST_MISMATCH')
+            if row['digest']!=intent_digest or digest(p)!=intent_digest: raise Denied('DIGEST_MISMATCH',help=_help('DIGEST_MISMATCH','dom_admit'))
             binding={'candidate_id':candidate_id,'review_id':review_id,'branch':p['branch'],
                      'scope_digest':self.scope_digest(),'result_scope':{p['branch']}|set(p['dependencies'])}
             old=self.dedupe(c,'admit:'+self.context.principal,idempotency_key,intent_digest,binding)
             if old: return old
             rr=c.execute('SELECT * FROM reviews WHERE id=? AND candidate=?',(review_id,candidate_id)).fetchone()
-            if not rr: raise Denied('STALE_REVIEW')
+            if not rr: raise Denied('STALE_REVIEW',help=_help('STALE_REVIEW','dom_admit'))
             r=json.loads(rr['payload'])
-            if r.get('decision','approve')!='approve': raise Denied('REVIEW_REJECTED')
-            if (r['root']==row['root'] and self.independent) or r['reviewer']!=self.context.principal: raise Denied('INDEPENDENCE_NOT_ENFORCED')
-            if r['candidate_digest']!=intent_digest or r['policy']!=self.policy or p['policy_digest']!=self.policy or r['snapshot_digest']!=digest(p['dependencies']): raise Denied('STALE_REVIEW')
-            if r.get('review_level','self' if r['root']==row['root'] else 'independent')!=('self' if r['root']==row['root'] else 'independent'): raise Denied('STALE_REVIEW')
+            if r.get('decision','approve')!='approve': raise Denied('REVIEW_REJECTED',help=_help('REVIEW_REJECTED','dom_admit'))
+            if (r['root']==row['root'] and self.independent) or r['reviewer']!=self.context.principal: raise Denied('INDEPENDENCE_NOT_ENFORCED',help=_help('INDEPENDENCE_NOT_ENFORCED','dom_admit'))
+            if r['candidate_digest']!=intent_digest or r['policy']!=self.policy or p['policy_digest']!=self.policy or r['snapshot_digest']!=digest(p['dependencies']): raise Denied('STALE_REVIEW',help=_help('STALE_REVIEW','dom_admit'))
+            if r.get('review_level','self' if r['root']==row['root'] else 'independent')!=('self' if r['root']==row['root'] else 'independent'): raise Denied('STALE_REVIEW',help=_help('STALE_REVIEW','dom_admit'))
             # L8: an approval with no reviewer session is not admissible.
             reviewer_session=rr['reviewer_session'] if 'reviewer_session' in rr.keys() else None
             if reviewer_session is None:
-                raise Denied('REVIEWER_SESSION_REQUIRED',hint='This review carries no reviewer session (reviewer_session is NULL); nothing was admitted. Review again from a trusted session.')
-            if any(self.head(c,b)!=v for b,v in p['dependencies'].items()): raise Denied('STALE_REVIEW')
-            if self.head(c,p['branch'])!=p['expected_branch_revision'] or r['expected_revision']!=p['expected_branch_revision']: raise Denied('REVISION_CONFLICT')
+                raise Denied('REVIEWER_SESSION_REQUIRED',hint='This review carries no reviewer session (reviewer_session is NULL); nothing was admitted. Review again from a trusted session.',
+                    help=('Тебе НУЖНО: 1) Убедиться, что review вызван с корректной session. '
+                          '2) Вызвать dom_review с явным session_id.'))
+            if any(self.head(c,b)!=v for b,v in p['dependencies'].items()): raise Denied('STALE_REVIEW',help=_help('STALE_REVIEW','dom_admit'))
+            if self.head(c,p['branch'])!=p['expected_branch_revision'] or r['expected_revision']!=p['expected_branch_revision']: raise Denied('REVISION_CONFLICT',help=_help('REVISION_CONFLICT','dom_admit'))
             self.check_references(c,p)
             tx=str(uuid.uuid4()); revision=p['expected_branch_revision']+1
             ids={i['local_id']:str(uuid.uuid4()) for i in p['items']}
@@ -632,7 +658,7 @@ class Service:
             self._record_session(c,p['branch'],claim if p['items'] else None,p.get('reason'))
             self.fault_hook('after_facts')
             changed=c.execute('UPDATE branch_heads SET revision=? WHERE branch=? AND revision=?',(revision,p['branch'],p['expected_branch_revision'])).rowcount
-            if changed!=1: raise Denied('REVISION_CONFLICT')
+            if changed!=1: raise Denied('REVISION_CONFLICT',help=_help('REVISION_CONFLICT','dom_admit'))
             self.remember(c,'admit:'+self.context.principal,idempotency_key,intent_digest,receipt,binding)
             for kind,target in [('OMH_EVIDENCE',self.task),('YAML_EXPORT','scoped-snapshot')]:
                 payload={'tx_id':tx,'branch':p['branch'],'revision':revision,'intent_digest':intent_digest,'target_ref':target}

@@ -19,10 +19,17 @@ from mcp.server.lowlevel import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 
-from .admission import Service
+from .admission import Denied, Service, guarded
 from . import claim_entry as claim_entry_mod
 from . import public_dto
 from . import skill_select as skill_select_mod
+# Usage help for every tool (contract 4.3).  The launcher and the check scripts
+# put the plugin root on sys.path; a host tree synced without HELP_DATA.py still
+# starts, and dom_help then reports that no tool is known (never an ImportError).
+try:
+    from HELP_DATA import HELP_DATA
+except ImportError:  # pragma: no cover - packaging edge case, not a runtime path
+    HELP_DATA = {}
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = (ROOT / 'runtime').resolve()
@@ -180,6 +187,9 @@ TOOLS = [
                inputSchema=claim_entry_mod.input_schema('dom_claim')),
     types.Tool(name='dom_find', description=claim_entry_mod.compose_description('dom_find'),
                inputSchema=claim_entry_mod.input_schema('dom_find')),
+    # Usage help (contract 4.3): read-only table lookup, advertised in both profiles.
+    types.Tool(name='dom_help', description=claim_entry_mod.compose_description('dom_help'),
+               inputSchema=claim_entry_mod.input_schema('dom_help')),
 ]
 
 LITE_SIGNATURE = {
@@ -206,6 +216,10 @@ LITE_SIGNATURE = {
     # Read-only skill router: the handler never touches the ledger, so no identity,
     # branch or review argument exists here.
     'dom_skill_select': ({'step': dict}, {'queue': list, 'plan_version': int, 'index_digest': str}),
+    # Read-only usage help.  ``tool`` is optional at the transport on purpose (like
+    # dom_start's ``request``): a missing name must be refused by the handler with a
+    # hint and help text, which a transport-level INVALID_ARGUMENTS cannot carry.
+    'dom_help': ({}, {'tool': str}),
 }
 # dom_start/dom_find accept requests with a missing 'request' so that the refusal can carry a hint
 # (a transport-level INVALID_ARGUMENTS cannot); everything else is matched exactly.
@@ -251,6 +265,18 @@ def argument_hint(name):
     return ('Arguments of %s are matched exactly (no unknown keys, no wrong types). Required: %s. Optional: %s. '
             'profile, review_level, principal and work are fixed at launch and cannot be passed.'
             % (name, ', '.join(required) or 'none', ', '.join(optional) or 'none'))
+
+
+def argument_help(name):
+    """Russian, imperative help for a transport argument-binding refusal."""
+    if name not in SIGNATURE:
+        return ('Тебе НУЖНО: 1) Вызвать dom_describe — он вернёт список инструментов профиля. '
+                '2) Выбрать имя из списка. 3) Повторить вызов.')
+    required, optional = SIGNATURE[name]
+    return ('Тебе НУЖНО: 1) Передать аргументы %s строго по сигнатуре: обязательные — %s, необязательные — %s. '
+            '2) Убрать неизвестные ключи и не менять типы. 3) Помнить: profile, review_level, principal и work '
+            'задаются при запуске сервера. 4) Повторить вызов.'
+            % (name, ', '.join(required) or 'нет', ', '.join(optional) or 'нет'))
 
 
 def strict_arguments(name, arguments):
@@ -349,6 +375,31 @@ def _handle_skill_select(service, args):
     )
 
 
+@guarded
+def handle_dom_help(tool):
+    """Usage help for one DOM tool, straight from HELP_DATA (read-only: the ledger,
+    identity and review policy are never consulted)."""
+    if type(tool) is not str or not tool.strip():
+        raise Denied('INVALID_ARGUMENTS', field='tool', hint='tool is required',
+                     help=('Тебе НУЖНО: 1) Выбрать инструмент из списка: dom_claim, dom_find, dom_update, ... '
+                           '2) Передать его название в tool.'))
+    data = HELP_DATA.get(tool)
+    if not data:
+        raise Denied('INVALID_FIELD', field='tool', hint="Unknown tool '%s'" % tool,
+                     help=('Тебе НУЖНО: 1) Вызвать dom_describe — он вернёт точные имена инструментов профиля. '
+                           '2) Либо передать существующее имя, например dom_claim, dom_find, dom_update. '
+                           '3) Повторить вызов.'))
+    return {'status': 'OK', 'tool': tool, 'usage': data['usage'],
+            'preconditions': list(data['preconditions']),
+            'postconditions': list(data['postconditions']),
+            'common_errors': [dict(entry) for entry in data['common_errors']],
+            'help': data['help']}
+
+
+def _handle_help(service, args):
+    return handle_dom_help(args.get('tool'))
+
+
 def _handle_reconcile(service, args):
     return service.reconcile()
 
@@ -437,6 +488,7 @@ HANDLERS = {
     'dom_annotate': _handle_annotate,
     'dom_distillate': _handle_distillate,
     'dom_skill_select': _handle_skill_select,
+    'dom_help': _handle_help,
     'dom_extract_submit': _handle_extract_submit,
     'dom_init': _handle_init,
     'dom_resume': _handle_resume,
@@ -491,10 +543,17 @@ def build_server(service, log_path=None):
             public = public_dto.project_tool(name, result, scope=service.context.branches, profile=service.profile)
         except ToolInput as error:
             code = str(error)
+            if code == 'INVALID_ARGUMENTS':
+                meta = public_dto.invalid_arguments(name, help_text=argument_help(name))
+                hint = argument_hint(name)
+            else:
+                meta = public_dto.error_help(code, service.profile, tool=name)
+                hint = meta.get('hint', '')
             payload = {'status': code,
                        'error': {'code': code, 'tool': name,
                                  'message': 'Tool call refused by the transport contract; nothing was executed.'},
-                       'hint': argument_hint(name) if code == 'INVALID_ARGUMENTS' else public_dto.error_help(code, service.profile).get('hint', '')}
+                       'hint': hint,
+                       'help': meta.get('help', '')}
             log({'tool': name, 'status': code, 'principal': service.context.principal})
             return types.CallToolResult(
                 content=[types.TextContent(type='text', text=json.dumps(payload, ensure_ascii=True, sort_keys=True))],
@@ -504,10 +563,12 @@ def build_server(service, log_path=None):
             # fixed typed enum; raw exception details are never serialized to
             # the caller. The operator log carries the exception type only.
             code = 'PUBLIC_PROJECTION_INVALID' if isinstance(error, public_dto.PublicProjectionError) else 'INTERNAL_ERROR'
+            meta = public_dto.error_help(code, service.profile, tool=name)
             payload = {'status': code,
                        'error': {'code': code, 'tool': name,
                                  'message': 'Tool processing refused; no details exposed.'},
-                       'hint': public_dto.error_help(code, service.profile).get('hint', '')}
+                       'hint': meta.get('hint', ''),
+                       'help': meta.get('help', '')}
             log({'tool': name, 'status': code, 'principal': service.context.principal,
                  'error_type': type(error).__name__})
             return types.CallToolResult(

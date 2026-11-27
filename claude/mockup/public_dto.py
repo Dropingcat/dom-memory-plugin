@@ -27,6 +27,122 @@ Public wire contracts (per tool_output_allowlists):
 """
 import copy
 
+# ------------------------------------------------------------- help data --
+# The per-tool help dictionary (opencode/HELP_DATA.py) is advisory: a tool call
+# never fails and no refusal changes because the file is absent (the Claude tree
+# ships no HELP_DATA.py).  Loaded once, by sys.path (the launcher puts the
+# plugin root there) and, failing that, by path next to ``mockup/``.
+HELP_LIMIT = 500
+HELP_PREFIX = 'Тебе НУЖНО:'
+
+
+def _load_tool_help():
+    try:
+        from HELP_DATA import HELP_DATA as data  # type: ignore
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        from pathlib import Path
+        path = Path(__file__).resolve().parents[1] / 'HELP_DATA.py'
+        spec = importlib.util.spec_from_file_location('_dom_help_data', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        data = getattr(module, 'HELP_DATA', {})
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+TOOL_HELP_DATA = _load_tool_help()
+
+DEFAULT_HELP = ('Тебе НУЖНО: 1) Прочитать status и hint — там причина отказа. '
+                '2) Исправить аргументы по hint. 3) Повторить вызов. '
+                '4) Если отказ повторяется — вызвать dom_describe и сверить аргументы инструмента.')
+
+
+def tool_help(tool):
+    """``help`` text of one tool from HELP_DATA, or '' when it is not known."""
+    entry = TOOL_HELP_DATA.get(tool) if isinstance(tool, str) else None
+    text = entry.get('help') if isinstance(entry, dict) else None
+    return text.strip()[:HELP_LIMIT] if isinstance(text, str) and text.strip() else ''
+
+
+# Russian, imperative fallback per refusal status: used when the tool carries no
+# HELP_DATA entry (or no explicit help).  Never invented codes, only real ones.
+_STATUS_HELP = {
+    'STORAGE_BUSY': 'Тебе НУЖНО: 1) Подождать мгновение. 2) Повторить тот же вызов. 3) Если STORAGE_BUSY не проходит — остановиться и сообщить оператору.',
+    'STORAGE_CORRUPT': 'Тебе НУЖНО: 1) Остановиться: файл базы повреждён или это не DOM-база. 2) Не править базу вручную. 3) Сообщить оператору путь базы и код ошибки.',
+    'STORAGE_READ_ONLY': 'Тебе НУЖНО: 1) Остановиться: база доступна только на чтение. 2) Проверить права на файл и каталог. 3) Сообщить оператору.',
+    'STORAGE_CONSTRAINT': 'Тебе НУЖНО: 1) Прочитать hint: сработало правило неизменяемости или целостности. 2) Не обходить правило прямым SQL. 3) Записать изменение новым claim/событием и повторить.',
+    'STORAGE_UNAVAILABLE': 'Тебе НУЖНО: 1) Повторить вызов один раз. 2) Если отказ повторяется — остановиться и сообщить оператору. 3) Не пересоздавать базу самостоятельно.',
+    'CHAIN_BROKEN': 'Тебе НУЖНО: 1) Остановить запись: цепочка событий не проходит проверку. 2) Не править базу прямым SQL. 3) Вызвать dom_trace и сообщить оператору разрыв.',
+    'MIGRATION_REQUIRED': 'Тебе НУЖНО: 1) В strict-профиле вызвать dom_init. 2) В lite-профиле вызвать dom_start с тем же request. 3) Повторить исходный вызов.',
+    'INTERNAL_ERROR': 'Тебе НУЖНО: 1) Повторить вызов один раз. 2) Если ошибка повторяется — сообщить оператору. 3) Не пытаться обойти инструмент прямым SQL.',
+    'PUBLIC_PROJECTION_INVALID': 'Тебе НУЖНО: 1) Не повторять тот же вызов вслепую. 2) Сообщить оператору: сервер отказал в сериализации собственного ответа. 3) Приложить имя инструмента.',
+    'PROFILE_STRICT': 'Тебе НУЖНО: 1) Понять профиль: этот инструмент есть только в lite. 2) Использовать strict-аналог (dom_init/dom_submit/dom_review/dom_admit) или перезапустить сервер в lite. 3) Свериться с dom_describe.',
+    'PROFILE_LITE': 'Тебе НУЖНО: 1) Понять профиль: этот инструмент есть только в strict. 2) В lite использовать dom_start. 3) Свериться с dom_describe.',
+    'SCOPE_DENIED': 'Тебе НУЖНО: 1) Использовать только свои ветки и идентификаторы. 2) Если база в каталоге — твой проект, вызвать dom_start с исходным request и adopt=true. 3) Иначе сменить каталог или сообщить оператору.',
+    'NOT_INITIALIZED': 'Тебе НУЖНО: 1) Вызвать dom_describe и посмотреть state. 2) При state=NOT_STARTED вызвать dom_start с запросом заказчика. 3) Повторить исходный вызов.',
+    'UNKNOWN_BRANCH': 'Тебе НУЖНО: 1) Вызвать dom_describe — он вернёт список branches. 2) Выбрать код из списка. 3) Передать его в branch.',
+    'NO_SUCH_BRANCH': 'Тебе НУЖНО: 1) Вызвать dom_describe и проверить state. 2) Убедиться, что ветка объявлена и в базе есть её голова. 3) При необходимости вызвать dom_start.',
+    'REVISION_OUT_OF_RANGE': 'Тебе НУЖНО: 1) Прочитать hint: там допустимый диапазон revision. 2) Взять revision в 0..head из dom_resume. 3) Повторить вызов.',
+    'REVISION_CONFLICT': 'Тебе НУЖНО: 1) Перечитать состояние через dom_resume. 2) Собрать кандидата заново от новой головы ветки. 3) Повторить submit/review/admit.',
+    'STALE_REVIEW': 'Тебе НУЖНО: 1) Перечитать кандидата и ветку через dom_resume. 2) Выполнить review заново на актуальных данных. 3) Адмитить новый review_id.',
+    'DIGEST_MISMATCH': 'Тебе НУЖНО: 1) Взять intent_digest без изменений из dom_candidate/dom_submit. 2) Передать его тем же значением. 3) Повторить вызов.',
+    'INDEPENDENCE_NOT_ENFORCED': 'Тебе НУЖНО: 1) Проверить review_policy в dom_describe. 2) Под independent ревьюер не должен быть автором кандидата. 3) Читать кандидата через dom_candidate и решать через dom_accept/dom_review.',
+    'REJECTED': 'Тебе НУЖНО: 1) Прочитать errors[] (path/code/fix) или hint. 2) Исправить указанные поля без приведения типов. 3) Повторить вызов.',
+    'INVALID_FIELD': 'Тебе НУЖНО: 1) Посмотреть поле field и hint. 2) Привести аргумент к допустимому виду. 3) Свериться с dom_describe и повторить вызов.',
+    'INVALID_ARGUMENTS': 'Тебе НУЖНО: 1) Передать аргументы строго по сигнатуре инструмента. 2) Убрать неизвестные ключи и не менять типы. 3) Помнить: profile, review_level, principal и work задаются при запуске. 4) Повторить вызов.',
+    'UNKNOWN_TYPE': 'Тебе НУЖНО: 1) Выбрать type из quote, decision, formula, code, data, concept, text. 2) Посмотреть пример для своего type в dom_describe. 3) Повторить вызов.',
+    'MISSING_FIELD': 'Тебе НУЖНО: 1) Посмотреть поле field. 2) Добавить обязательное для type поле (dom_describe покажет пример). 3) Повторить вызов.',
+    'EMPTY_TEXT': 'Тебе НУЖНО: 1) Передать непустой text. 2) Не обрезать материал до пробелов. 3) Повторить вызов.',
+    'TEXT_TOO_LARGE': 'Тебе НУЖНО: 1) Разбить материал на части до 1 MiB. 2) Записать каждую часть отдельным claim. 3) Связать части через basis/refines.',
+    'INVALID_TEXT': 'Тебе НУЖНО: 1) Передать обычный UTF-8 текст без одиночных суррогатов. 2) Перекодировать материал. 3) Повторить вызов.',
+    'NO_SUCH_CLAIM': 'Тебе НУЖНО: 1) Найти claim_id через dom_find. 2) Убедиться, что claim в твоих ветках. 3) Повторить вызов с найденным id.',
+    'NO_SUCH_CANDIDATE': 'Тебе НУЖНО: 1) Взять candidate_id из dom_resume.pending или dom_extract. 2) Прочитать кандидата через dom_candidate. 3) Повторить вызов.',
+    'NOT_CURRENT': 'Тебе НУЖНО: 1) Прочитать dom_claim_versions. 2) Взять claim_id с is_current=true. 3) Повторить update для текущей версии.',
+    'CONFLICT_READ_REQUIRED': 'Тебе НУЖНО: 1) Прочитать текущую версию через dom_claim_versions. 2) Передать expected_current=current_claim_id. 3) Повторить dom_update или сделать fork, если версия чужая.',
+    'FORK_NOT_ALLOWED': 'Тебе НУЖНО: 1) Понять, что это твоя же текущая версия. 2) Обновить её mode=update или оставить как есть. 3) Fork применять только к чужой версии.',
+    'ROOT_IMMUTABLE': 'Тебе НУЖНО: 1) Не менять корневой request заказчика. 2) Записать уточнение новым claim с basis=[root claim_id]. 3) Goal уточнять отдельным dom_update goal-claim.',
+    'NO_CHANGE': 'Тебе НУЖНО: 1) Изменить text или anatomy. 2) Либо не вызывать update: записывать нечего. 3) Повторить только при реальном изменении.',
+    'CANDIDATE_CLOSED': 'Тебе НУЖНО: 1) Прочитать состояние через dom_candidate. 2) Не решать кандидата повторно. 3) Для исправления записать новый claim и пройти review заново.',
+    'REVIEW_REJECTED': 'Тебе НУЖНО: 1) Прочитать note отклонения через dom_candidate. 2) Записать исправленный claim. 3) Провести review заново.',
+    'REVIEW_REQUIRED': 'Тебе НУЖНО: 1) Выполнить validate этой версии. 2) Только после успешного review вызывать accept. 3) Повторить последовательность.',
+    'REVIEW_FAILED': 'Тебе НУЖНО: 1) Исправить text или anchors. 2) Предложить версию заново (propose). 3) Повторить validate.',
+    'REVIEW_STALE': 'Тебе НУЖНО: 1) Понять, что text или anchors изменились. 2) Выполнить validate заново. 3) Только потом accept.',
+    'GATE_NO_READ': 'Тебе НУЖНО: 1) Вызвать dom_find или dom_context для каждого claim в basis. 2) Получить read receipt. 3) Повторить вызов.',
+    'REVIEWER_SESSION_REQUIRED': 'Тебе НУЖНО: 1) Убедиться, что review вызван с корректной session. 2) Вызвать dom_review с явным session_id.',
+    'TASK_NOT_FOUND': 'Тебе НУЖНО: 1) Вызвать dom_plan_tree и взять существующий id/путь/код. 2) Либо загрузить план через dom_plan_ingest. 3) Повторить вызов.',
+    'TASK_ARCHIVED': 'Тебе НУЖНО: 1) Вызвать dom_plan_tree. 2) Выбрать текущий (не архивный) пункт плана. 3) Привязать claim к нему.',
+    'PLAN_CONFLICT': 'Тебе НУЖНО: 1) Прочитать текущий план через dom_plan_tree. 2) Слить изменения. 3) Повторить dom_plan_ingest с base_revision=current_revision.',
+    'PLAN_EMPTY': 'Тебе НУЖНО: 1) Оформить план нумерованными пунктами (1., 1.1), списком или заголовками. 2) Либо передать JSON [{"title": ...}]. 3) Повторить вызов.',
+    'PLAN_ROOT_NOT_FOUND': 'Тебе НУЖНО: 1) Взять корень из dom_plan_status или dom_plan_tree. 2) Передать id, путь (П1.2) или код ветки. 3) Повторить вызов.',
+    'PLAN_PROJECTION_STALE': 'Тебе НУЖНО: 1) Переслать план через dom_plan_ingest. 2) Дождаться свежей проекции. 3) Повторить dom_plan_tree.',
+    'PLAN_CYCLE': 'Тебе НУЖНО: 1) Остановить обход. 2) Проверить структуру плана на цикл. 3) Исправить и переслать план.',
+    'STALE_PROJECTION_SNAPSHOT': 'Тебе НУЖНО: 1) Переслать план через dom_plan_ingest с актуальным source_revision. 2) Дождаться свежей проекции. 3) Повторить dom_plan_tree.',
+    'PLAN_TOO_WIDE': 'Тебе НУЖНО: 1) Сократить план до допустимого числа пунктов и подпунктов. 2) Разбить работу на несколько планов по этапам. 3) Повторить dom_plan_ingest.',
+    'STATEMENT_NOT_FOUND': 'Тебе НУЖНО: 1) Взять source/distillate из строки [DOM project memory]. 2) Либо вызвать dom_distillate(action="show"). 3) Повторить вызов.',
+    'PROPOSAL_INVALID': 'Тебе НУЖНО: 1) Передать text в 1-3 предложения. 2) Передать anchors: по одному массиву дословных цитат на предложение. 3) Повторить propose.',
+    'SPAN_NOT_FOUND': 'Тебе НУЖНО: 1) Скопировать предложение источника дословно. 2) Не пересказывать текст. 3) Повторить вызов.',
+    'SPAN_AMBIGUOUS': 'Тебе НУЖНО: 1) Взять более длинную уникальную цитату. 2) Убедиться, что она встречается один раз. 3) Повторить вызов.',
+    'DISTILLATE_DISPUTED': 'Тебе НУЖНО: 1) Закрыть открытый спор через action=resolve с note. 2) Дождаться снятия блокировки. 3) Повторить действие.',
+    'DISTILLATE_LOOP': 'Тебе НУЖНО: 1) Остановиться: три неудачных review закрыли цепочку. 2) Спросить пользователя о новом указании. 3) Новый источник начнёт новую цепочку.',
+    'NO_IMPROVEMENT': 'Тебе НУЖНО: 1) Предложить реально изменённый text. 2) Либо оставить эффективную версию. 3) Повторить только при улучшении.',
+    'REQUEST_REQUIRED': 'Тебе НУЖНО: 1) Передать запрос заказчика дословно: dom_start({"request": "<запрос>"}). 2) Не передавать пустую строку. 3) Повторить вызов.',
+    'ROOT_CONFLICT': 'Тебе НУЖНО: 1) Повторить dom_start с исходным request. 2) Goal уточнять через dom_update, не перезаписывать корень. 3) Для нового проекта сменить каталог.',
+    'UNKNOWN_TOOL': 'Тебе НУЖНО: 1) Вызвать dom_describe — он вернёт список инструментов профиля. 2) Выбрать имя из списка. 3) Повторить вызов.',
+    'OMH_BINDING_UNVERIFIED': 'Тебе НУЖНО: 1) Понять, что сервер запущен с --no-simulation. 2) Перезапустить без этого флага. 3) Сообщить оператору.',
+    'POLICY_MISMATCH': 'Тебе НУЖНО: 1) Взять policy_digest из launch-конфигурации без изменений. 2) Не вычислять его самостоятельно. 3) Повторить вызов.',
+    'OWNER_AUTHORITY_REQUIRED': 'Тебе НУЖНО: 1) Понять, что операция доступна только роли owner. 2) Перезапустить сервер с ролью owner. 3) Повторить вызов.',
+    'DELIVERY_ENGINE_ONLY': 'Тебе НУЖНО: 1) Не писать состояние доставки вручную. 2) Вызвать dom_sync. 3) Прочитать результат через dom_sync_status.',
+    'IDEMPOTENCY_MISMATCH': 'Тебе НУЖНО: 1) Для нового содержимого взять новый idempotency_key. 2) Для повтора использовать исходный ключ и те же данные. 3) Повторить вызов.',
+    'IDEMPOTENCY_BINDING_MISMATCH': 'Тебе НУЖНО: 1) Взять новый idempotency_key. 2) Либо повторить исходный вызов с теми же candidate/branch. 3) Не смешивать ключи между кандидатами.',
+    'IDEMPOTENCY_REVIEW_MISMATCH': 'Тебе НУЖНО: 1) Использовать исходный review_id. 2) Либо взять новый idempotency_key. 3) Повторить вызов.',
+    'IDEMPOTENCY_BINDING_UNKNOWN': 'Тебе НУЖНО: 1) Взять новый idempotency_key. 2) Не переиспользовать старый ключ. 3) Повторить вызов.',
+}
+
 # ---------------------------------------------------------------- schema --
 
 # field spec tokens:
@@ -63,7 +179,7 @@ RECORDS = {
     'Broken': {
         'status': 'str', 'readiness': 'str',
         'ready_for_owner_review': 'bool', 'blockers': ('list', 'str'),
-        'simulated': 'bool', 'hint': ('opt', 'str'),
+        'simulated': 'bool', 'hint': ('opt', 'str'), 'help': ('opt', 'str'),
     },
     # WR-ADD: a refusal now carries a self-describing hint (what is wrong and the
     # exact next call).  The optional fields are the whole extension; every one is
@@ -72,9 +188,11 @@ RECORDS = {
         'status': 'str', 'hint': ('opt', 'str'), 'next_action': ('opt', 'str'),
         'branches': ('opt', ('list', 'str')), 'field': ('opt', 'str'),
         'claim_id': ('opt', 'str'), 'resolution': ('opt', ('opaque',)),
+        'help': ('opt', 'str'),
     },
     'StorageErrorBody': {'code': 'str', 'sqlite_code': ('null', 'int'), 'sqlite_name': ('null', 'str')},
-    'StorageError': {'status': 'str', 'error': ('rec', 'StorageErrorBody'), 'hint': ('opt', 'str')},
+    'StorageError': {'status': 'str', 'error': ('rec', 'StorageErrorBody'), 'hint': ('opt', 'str'),
+                     'help': ('opt', 'str')},
     'ClaimItem': {
         'local_id': 'str', 'content_type': 'str', 'body_b64': 'str',
         'encoding': 'str', 'media_type': 'str', 'reason': 'str',
@@ -375,6 +493,14 @@ RECORDS.update({
         'prefetch': ('list', 'str'), 'missing_caps': ('list', 'str'), 'groups': ('list', 'str'),
         'confidence_bp': 'int', 'signals': ('map', ('list', 'str')),
     },
+    # Usage help (dom_help): the strings are the server's own HELP_DATA table,
+    # never ledger content, so the record is closed but carries no proof.
+    'HelpError': {'code': 'str', 'cause': 'str', 'fix': 'str'},
+    'ToolHelp': {
+        'status': 'str', 'tool': 'str', 'usage': 'str',
+        'preconditions': ('list', 'str'), 'postconditions': ('list', 'str'),
+        'common_errors': ('list', 'HelpError'), 'help': 'str',
+    },
 })
 
 # tool -> top-level public schema (healthy or fixed error surface)
@@ -411,6 +537,7 @@ LITE_RESPONSES = {
     'dom_distillate': ('DistillateState', ('DISTILLATE_SHOWN', 'PROPOSED', 'ALREADY_RECORDED', 'VALIDATED',
                                            'REVIEW_FAILED', 'ACCEPTED', 'WITHDRAWN', 'DISPUTED', 'RESOLVED')),
     'dom_skill_select': ('SkillSelection', ('SKILLS_SELECTED',)),
+    'dom_help': ('ToolHelp', ('OK',)),
 }
 DOMAIN_ERROR_FIELDS = frozenset(RECORDS['DomainError'])
 
@@ -555,17 +682,49 @@ _HELP = {
 }
 
 
-def error_help(status, profile='strict'):
-    """``{'hint', 'next_action'?}`` for a refusal status, or ``{}`` if none is defined."""
+def error_help(status, profile='strict', tool=None, help_text=None):
+    """``{'hint'?, 'next_action'?, 'help'}`` for a refusal status.
+
+    ``help`` is always non-empty and actionable: the explicit ``help_text`` wins,
+    then the tool's HELP_DATA entry, then the status fallback, then
+    ``DEFAULT_HELP``.  ``hint``/``next_action`` keep the closed ``_HELP`` wording
+    (``profile`` selects strict or lite)."""
     entry = _HELP.get(status)
-    if entry is None:
-        return {}
-    hint, action = entry[1] if profile == 'lite' else entry[0]
     out = {}
+    if entry is not None:
+        hint, action = entry[1] if profile == 'lite' else entry[0]
+        if hint:
+            out['hint'] = hint
+        if action:
+            out['next_action'] = action
+    text = (help_text or '').strip()
+    if not text:
+        # Infrastructure refusals (storage, chain, internal) are about the server,
+        # not about the tool's arguments: the status text is the actionable one.
+        if status.startswith('STORAGE_') or status in ('CHAIN_BROKEN', 'MIGRATION_REQUIRED',
+                                                       'INTERNAL_ERROR', 'PUBLIC_PROJECTION_INVALID'):
+            text = _STATUS_HELP.get(status) or ''
+        text = text or tool_help(tool) or _STATUS_HELP.get(status) or DEFAULT_HELP
+    out['help'] = text[:HELP_LIMIT]
+    return out
+
+
+# Every status that is a refusal (raised as DomainError or returned as a value):
+# ``guarded`` uses it to attach help to a refusal returned instead of raised.
+KNOWN_REFUSALS = frozenset(_HELP) | frozenset(_STATUS_HELP)
+
+
+def invalid_arguments(tool=None, help_text=None):
+    """Error helper for transport argument binding (INVALID_ARGUMENTS)."""
+    return error_help('INVALID_ARGUMENTS', 'lite', tool=tool, help_text=help_text)
+
+
+def invalid_field(field, tool=None, hint=None, help_text=None):
+    """Error helper for one refused field (INVALID_FIELD)."""
+    out = error_help('INVALID_FIELD', 'lite', tool=tool, help_text=help_text)
+    out['field'] = field
     if hint:
         out['hint'] = hint
-    if action:
-        out['next_action'] = action
     return out
 
 # composite records: base record + read_snapshot (built programmatically)
@@ -737,18 +896,20 @@ def broken(result):
             'ready_for_owner_review': False,
             'blockers': list(result.get('blockers') or ['EVENT_CHAIN_BROKEN']),
             'simulated': True,
-            'hint': _HELP['CHAIN_BROKEN'][0][0]}
+            'hint': _HELP['CHAIN_BROKEN'][0][0],
+            'help': _STATUS_HELP['CHAIN_BROKEN']}
 
 
 # ------------------------------------------------------- tool serializer --
 
-def _refusal(status, profile, extra=None):
-    """DomainError with the table hint (unless the caller supplied its own)."""
+def _refusal(status, profile, extra=None, tool=None):
+    """DomainError with the table hint (unless the caller supplied its own) and
+    an actionable ``help`` (explicit, per tool, else per status)."""
     body = {'status': status}
     for key, value in (extra or {}).items():
         if key in DOMAIN_ERROR_FIELDS and key != 'status':
             body[key] = value
-    for key, value in error_help(status, profile).items():
+    for key, value in error_help(status, profile, tool=tool).items():
         body.setdefault(key, value)
     return _project(body, ('rec', 'DomainError'), '$', None)
 
@@ -767,29 +928,33 @@ def project_tool(name, result, scope=None, profile='strict'):
     if not isinstance(status, str):
         raise PublicProjectionError('MISSING_STATUS', '$')
     if status == 'CHAIN_BROKEN':
-        return _project(result, ('rec', 'Broken'), '$', scope)
+        out = _project(result, ('rec', 'Broken'), '$', scope)
+        out.setdefault('help', _STATUS_HELP['CHAIN_BROKEN'])
+        return out
     if isinstance(result.get('error'), dict) and set(result) == {'status', 'error'}:
         out = _project(result, ('rec', 'StorageError'), '$', scope)
-        hint = error_help(out['error']['code'], profile).get('hint')
+        meta = error_help(out['error']['code'], profile, tool=name)
+        hint = meta.get('hint')
         if hint:
             out['hint'] = hint
+        out['help'] = meta['help']
         return out
     if set(result) <= DOMAIN_ERROR_FIELDS:
         # uniform domain refusal (SCOPE_DENIED / REJECTED / NOT_INITIALIZED /
         # MIGRATION_REQUIRED / INDEPENDENCE_NOT_ENFORCED / POLICY_MISMATCH /
         # DIGEST_MISMATCH / STALE_REVIEW / REVISION_CONFLICT / ...): DomainError + hint
-        return _refusal(status, profile, result)
+        return _refusal(status, profile, result, tool=name)
     if name == 'dom_extract' and status == 'EXTRACTION_REQUEST':
         return _project(result, ('rec', 'ExtractionRequest'), '$', scope)
     if name == 'dom_update' and status == 'CLAIM_FORKED':
         return _project(result, ('rec', 'ClaimForked'), '$', scope)
     if name == 'dom_update' and status == 'CONFLICT_READ_REQUIRED':
         out = _project(result, ('rec', 'UpdateConflict'), '$', scope)
-        out.update(error_help('CONFLICT_READ_REQUIRED', profile))
+        out.update(error_help('CONFLICT_READ_REQUIRED', profile, tool=name))
         return out
     if name == 'dom_plan_ingest' and status == 'PLAN_CONFLICT':
         out = _project(result, ('rec', 'PlanConflict'), '$', scope)
-        out.update(error_help('PLAN_CONFLICT', profile))
+        out.update(error_help('PLAN_CONFLICT', profile, tool=name))
         return out
     if name in ('dom_claim', 'dom_update', 'dom_annotate') and status == 'RECORDED_CANDIDATE':
         return _project(result, ('rec', 'ClaimCandidate'), '$', scope)
@@ -797,29 +962,31 @@ def project_tool(name, result, scope=None, profile='strict'):
         record, ok_statuses = LITE_RESPONSES[name]
         if status in ok_statuses:
             return _project(result, ('rec', record), '$', scope)
-        return _refusal(status, profile)
+        return _refusal(status, profile, tool=name)
     if name in TOOL_RESPONSES:
         return _project(result, ('rec', TOOL_RESPONSES[name]), '$', scope)
     if name == 'dom_init':
         if status == 'INITIALIZED':
             return _project(result, ('rec', 'Initialized'), '$', scope)
-        return _refusal(status, profile)
+        return _refusal(status, profile, tool=name)
     if name in ('dom_submit', 'dom_append'):
         if status == 'RECORDED_CANDIDATE':
             return _project(result, ('rec', 'Candidate'), '$', scope)
         if status == 'REJECTED' and 'errors' in result:
             out = _project(result, ('rec', 'Rejected'), '$', scope)
-            out.update(error_help('REJECTED', profile))
+            out.update(error_help('REJECTED', profile, tool=name))
             return out
-        return _refusal(status, profile)
+        return _refusal(status, profile, tool=name)
     if name == 'dom_review':
         if status in ('DEMO_REVIEWED', 'REVIEW_REJECTED') and 'review_id' in result:
             return _project(result, ('rec', 'Reviewed'), '$', scope)
-        return _refusal(status, profile)
+        return _refusal(status, profile, tool=name)
     if name == 'dom_admit':
         if status == 'DEMO_ADMITTED':
             return _project(result, ('rec', 'Admitted'), '$', scope)
-        return _refusal(status, profile)
+        return _refusal(status, profile, tool=name)
     if isinstance(result.get('error'), dict):
-        return _project(result, ('rec', 'StorageError'), '$', scope)
-    return _refusal(status, profile)
+        out = _project(result, ('rec', 'StorageError'), '$', scope)
+        out['help'] = _STATUS_HELP.get(status) or DEFAULT_HELP
+        return out
+    return _refusal(status, profile, tool=name)

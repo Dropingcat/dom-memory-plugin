@@ -80,9 +80,44 @@ def _denied():
     return Denied
 
 
+# Advisory help (contract 4.2): every refusal of a lite tool names the exact next
+# step.  HELP_DATA is imported softly -- a missing dictionary never fails a call.
+try:  # pragma: no cover - the dictionary is present in both shipped trees
+    from HELP_DATA import HELP_DATA as TOOL_HELP_DATA
+except Exception:
+    TOOL_HELP_DATA = {}
+
+HELP_LIMIT = 500
+DEFAULT_HELP = ('Тебе НУЖНО: 1) Прочитать field и hint — там причина отказа. '
+                '2) Исправить аргумент. 3) Свериться с dom_describe. 4) Повторить вызов.')
+
+
+def _tool_help(tool):
+    """``help`` text of one tool from HELP_DATA, or '' when it is not known."""
+    entry = TOOL_HELP_DATA.get(tool) if isinstance(tool, str) else None
+    text = entry.get('help') if isinstance(entry, dict) else None
+    return text.strip()[:HELP_LIMIT] if isinstance(text, str) and text.strip() else ''
+
+
+def _help(tool=None, text=None):
+    """Advisory help for one refusal: explicit > tool entry > default."""
+    out = (text or '').strip() or _tool_help(tool) or DEFAULT_HELP
+    return out[:HELP_LIMIT]
+
+
+def _denied_for(tool):
+    """A ``Denied`` factory bound to one tool: every raise carries its help."""
+    Denied = _denied()
+    def make(status, **extra):
+        extra.setdefault('help', _help(tool))
+        return Denied(status, **extra)
+    return make
+
+
 def _lite_only(svc):
     if not svc.lite:
-        raise _denied()('PROFILE_STRICT')
+        raise _denied()('PROFILE_STRICT',
+                        help=_help(None, 'Тебе НУЖНО: 1) Понять профиль сервера (dom_describe). 2) Этот инструмент есть только в lite. 3) Использовать strict-аналог или перезапустить сервер в lite.'))
 
 
 def _now():
@@ -90,25 +125,32 @@ def _now():
 
 
 # ----------------------------------------------------------------- arguments --
-def _text_bytes(text, field='text'):
+def _text_bytes(text, field='text', tool=None):
     Denied = _denied()
     if type(text) is not str:
-        raise Denied('INVALID_FIELD', field=field)
+        raise Denied('INVALID_FIELD', field=field,
+                     help=_help(tool, 'Тебе НУЖНО: 1) Передать %s строкой UTF-8 (не число и не объект). 2) Повторить вызов.' % field))
     if not text.strip():
-        raise Denied('REQUEST_REQUIRED' if field == 'request' else 'EMPTY_TEXT', field=field)
+        raise Denied('REQUEST_REQUIRED' if field == 'request' else 'EMPTY_TEXT', field=field,
+                     help=_help(tool, ('Тебе НУЖНО: 1) Передать запрос заказчика дословно (непустая строка). 2) Повторить dom_start.'
+                                       if field == 'request' else
+                                       'Тебе НУЖНО: 1) Передать непустой %s. 2) Повторить вызов.' % field)))
     try:
         raw = text.encode('utf-8')
     except UnicodeEncodeError:
-        raise Denied('INVALID_TEXT', field=field) from None
+        raise Denied('INVALID_TEXT', field=field,
+                     help=_help(tool, 'Тебе НУЖНО: 1) Передать обычный UTF-8 текст без одиночных суррогатов. 2) Перекодировать материал. 3) Повторить вызов.')) from None
     if len(raw) > MAX_TEXT_BYTES:
-        raise Denied('TEXT_TOO_LARGE', field=field)
+        raise Denied('TEXT_TOO_LARGE', field=field,
+                     help=_help(tool, 'Тебе НУЖНО: 1) Разбить материал на части до 1 MiB. 2) Записать каждую часть отдельным claim. 3) Связать части через basis/refines.'))
     return raw
 
 
 def _str_list(value, field, allow_empty=True):
     Denied = _denied()
     if type(value) is not list or any(type(v) is not str or not v for v in value) or (not value and not allow_empty):
-        raise Denied('INVALID_FIELD', field=field, hint="'%s' must be an array of non-empty strings." % field)
+        raise Denied('INVALID_FIELD', field=field, hint="'%s' must be an array of non-empty strings." % field,
+                     help=_help(None, 'Тебе НУЖНО: 1) Передать %s массивом непустых строк. 2) Убрать пустые элементы. 3) Повторить вызов.' % field))
     return value
 
 
@@ -405,7 +447,7 @@ MAPPING_FIELDS = ('units', 'notation', 'columns')  # symbol -> meaning/unit/type
 def _check_structured(name, value):
     """Object/array arguments: storable in dom-c14n (QA004 F-35: a key the canonical form
     refuses was an INTERNAL_ERROR) and, for symbol maps, no blank keys or values (F-02)."""
-    Denied = _denied()
+    Denied = _denied_for('dom_claim')
     from .dom_contract import check_tree
     try:
         check_tree(value)
@@ -424,13 +466,17 @@ def _check_structured(name, value):
 
 def _validated_claim_args(svc, branch, typ, text, fields):
     """Shared argument checks of dom_claim. -> (raw, args, requirement_refs, reason, origin_version)."""
-    Denied = _denied()
+    Denied = _denied_for('dom_claim')
     if type(branch) is not str or not branch:
-        raise Denied('INVALID_FIELD', field='branch', hint="'branch' must be one of the declared branch codes (see dom_describe).")
+        raise Denied('INVALID_FIELD', field='branch', hint="'branch' must be one of the declared branch codes (see dom_describe).",
+                     help=('Тебе НУЖНО: 1) Вызвать dom_describe — он покажет список веток. '
+                           '2) Выбрать подходящую ветку. 3) Передать её в branch.'))
     svc.scope(branch)
     if type(typ) is not str or typ not in TYPES:
-        raise Denied('UNKNOWN_TYPE', field='type')
-    raw = _text_bytes(text)
+        raise Denied('UNKNOWN_TYPE', field='type',
+                     help=('Тебе НУЖНО: 1) Выбрать type из: quote, decision, formula, code, data, concept, text. '
+                           '2) Посмотреть пример для своего type в dom_describe. 3) Повторить вызов.'))
+    raw = _text_bytes(text, 'text', 'dom_claim')
     args = {}
     anatomy = {}
     for name, value in fields.items():
@@ -475,7 +521,9 @@ def _validated_claim_args(svc, branch, typ, text, fields):
     for name in REQUIRED_FIELDS.get(typ, ()):
         if _missing(args.get(name)):
             raise Denied('MISSING_FIELD', field=name,
-                         hint="type '%s' requires '%s' (non-empty). Required for %s: %s. Nothing was recorded." % (typ, name, typ, ', '.join(REQUIRED_FIELDS[typ])))
+                         hint="type '%s' requires '%s' (non-empty). Required for %s: %s. Nothing was recorded." % (typ, name, typ, ', '.join(REQUIRED_FIELDS[typ])),
+                         help=('Тебе НУЖНО: 1) Добавить обязательное поле %s для type %s. '
+                               '2) Посмотреть пример вызова в dom_describe. 3) Повторить dom_claim: ничего не записано.' % (name, typ)))
     if typ == 'text' and args.get('classification') == 'factual' and not args.get('evidence'):
         raise Denied('INVALID_FIELD', field='evidence', hint="classification 'factual' needs evidence: [{\"ref\": \"...\", \"locator\": \"...\"}]; or omit classification for an interpretation.")
     from .dom_contract import anatomy_errors
@@ -489,7 +537,7 @@ def _validated_claim_args(svc, branch, typ, text, fields):
 
 def _plan_branch(svc, branch, fields):
     """dom_claim(plan_task=...): the branch comes from the plan item. -> (branch, task_row|None, role)."""
-    Denied = _denied()
+    Denied = _denied_for('dom_claim')
     ref = fields.get('plan_task')
     role = fields.get('link_role')
     if ref is None:
@@ -505,11 +553,17 @@ def _plan_branch(svc, branch, fields):
     with svc.store.read() as c:
         task = planning.resolve_task(c, ref)
     if task is None or task['branch'] is None:
-        raise Denied('TASK_NOT_FOUND', field='plan_task', hint='No plan item with this id, path (П1.2) or branch code. Call dom_plan_tree or dom_plan_ingest first.')
+        raise Denied('TASK_NOT_FOUND', field='plan_task', hint='No plan item with this id, path (П1.2) or branch code. Call dom_plan_tree or dom_plan_ingest first.',
+                     help=('Тебе НУЖНО: 1) Вызвать dom_plan_tree и взять существующий id/путь/код. '
+                           '2) Либо загрузить план через dom_plan_ingest. 3) Повторить dom_claim с plan_task.'))
     if task['archived']:
-        raise Denied('TASK_ARCHIVED', field='plan_task', hint='This plan item was removed from the plan; link the claim to a current item.')
+        raise Denied('TASK_ARCHIVED', field='plan_task', hint='This plan item was removed from the plan; link the claim to a current item.',
+                     help=('Тебе НУЖНО: 1) Вызвать dom_plan_tree. 2) Выбрать текущий (не архивный) пункт. '
+                           '3) Повторить dom_claim с этим plan_task.'))
     if branch not in (None, '', task['branch']):
-        raise Denied('INVALID_FIELD', field='branch', hint="With 'plan_task' omit 'branch' (it is %s) or pass exactly that code." % task['branch'])
+        raise Denied('INVALID_FIELD', field='branch', hint="With 'plan_task' omit 'branch' (it is %s) or pass exactly that code." % task['branch'],
+                     help=('Тебе НУЖНО: 1) Либо убрать branch и оставить plan_task (ветка %s). '
+                           '2) Либо передать ровно этот код. 3) Повторить вызов.' % task['branch']))
     return task['branch'], task, role
 
 
@@ -527,7 +581,8 @@ def claim(svc, branch, typ, text, fields):
             target = c.execute('SELECT origin_branch FROM claims WHERE id=?', (anatomy['refines'],)).fetchone()
         if target is None or target[0] not in svc.context.branches:
             raise _denied()('INVALID_FIELD', field='refines',
-                            hint="'refines' must be the claim_id of an existing claim (dom_find); nothing was recorded.")
+                            hint="'refines' must be the claim_id of an existing claim (dom_find); nothing was recorded.",
+                            help=_help('dom_claim', 'Тебе НУЖНО: 1) Найти существующий claim_id через dom_find. 2) Передать его в refines. 3) Либо убрать refines. 4) Повторить вызов.'))
     if task is not None:
         anatomy['plan_ref'] = task['plan_task_id']
         if 'refines' not in anatomy:
@@ -619,13 +674,16 @@ def annotate(svc, claim_id, kind, fields):
     The claim itself never changes; the event is a new row of its history.
     Under the manual / independent review policy the event waits for review.
     """
-    Denied = _denied()
+    Denied = _denied_for('dom_annotate')
     _lite_only(svc)
     svc.scope()
     svc.capability('submit')
     svc.ready()
     if kind not in ANNOTATIONS:
-        raise Denied('INVALID_FIELD', field='kind', hint="'kind' is one of: %s." % ', '.join(ANNOTATIONS))
+        raise Denied('INVALID_FIELD', field='kind', hint="'kind' is one of: %s." % ', '.join(ANNOTATIONS),
+                     help=('Тебе НУЖНО: 1) Выбрать kind: comment, link, property, archive, conflict, resolve. '
+                           '2) Передать его аргументы: comment→text, link→url+locator, property→name+value, conflict/resolve→conflict_ref. '
+                           '3) Повторить dom_annotate.'))
     value = {}
     for name in ANNOTATIONS[kind]:
         v = fields.get(name)
@@ -680,16 +738,19 @@ def accept(svc, candidate_id, decision='approve', note=None):
     candidate gets a 'superseded' review that names the new one, so it leaves
     the pending list without being counted as rejected.
     """
-    Denied = _denied()
+    Denied = _denied_for('dom_accept')
     _lite_only(svc)
     svc.scope()
     if decision not in ('approve', 'reject'):
-        raise Denied('INVALID_FIELD', field='decision')
+        raise Denied('INVALID_FIELD', field='decision',
+                     help='Тебе НУЖНО: 1) Передать decision=approve или decision=reject. 2) Для reject добавить непустой note. 3) Повторить dom_accept.')
     view = svc.candidate_view(candidate_id)
     if view.get('status') != 'CANDIDATE':
         return view
     if view['state'] in ('ADMITTED', 'REJECTED', 'SUPERSEDED'):
-        raise Denied('CANDIDATE_CLOSED', field='candidate_id', hint='This candidate is already %s.' % view['state'].lower())
+        raise Denied('CANDIDATE_CLOSED', field='candidate_id', hint='This candidate is already %s.' % view['state'].lower(),
+                     help=('Тебе НУЖНО: 1) Не решать закрытого кандидата повторно. 2) Для исправления записать новый claim '
+                           'и пройти review заново. 3) Прочитать состояние через dom_candidate.'))
     if decision == 'reject':
         return svc.review(candidate_id, view['intent_digest'], 'reject', note)
     with svc.store.read() as c:
@@ -704,7 +765,9 @@ def accept(svc, candidate_id, decision='approve', note=None):
             return dict(receipt, candidate_id=candidate_id) if receipt.get('status') == 'DEMO_ADMITTED' else receipt
     if svc.independent:
         # A rebase would make the reviewer the author of the new candidate.
-        raise Denied('REVISION_CONFLICT', hint='The branch moved since this candidate was submitted. Under the independent review policy the author must submit it again; reject this one with a note.')
+        raise Denied('REVISION_CONFLICT', hint='The branch moved since this candidate was submitted. Under the independent review policy the author must submit it again; reject this one with a note.',
+                     help=('Тебе НУЖНО: 1) Отклонить этого кандидата с note. 2) Автору пересдать материал заново от новой головы ветки. '
+                           '3) Под independent нельзя ребейзить кандидата за автора.'))
     items = p['items']
 
     def build(revision):
@@ -838,11 +901,13 @@ def _author_card(c, claim_id):
 
 
 def update(svc, claim_id, text, reason, idempotency_key=None, anatomy=None, expected_current=None, mode='auto'):
-    Denied = _denied()
+    Denied = _denied_for('dom_update')
     if mode not in ('auto', 'update', 'fork'):
-        raise Denied('INVALID_FIELD', field='mode', hint="'mode' is auto (default), update or fork.")
+        raise Denied('INVALID_FIELD', field='mode', hint="'mode' is auto (default), update or fork.",
+                     help='Тебе НУЖНО: 1) Передать mode=auto, update или fork. 2) fork — только для чужой версии после чтения. 3) Повторить dom_update.')
     if expected_current is not None and (type(expected_current) is not str or not expected_current.strip()):
-        raise Denied('INVALID_FIELD', field='expected_current')
+        raise Denied('INVALID_FIELD', field='expected_current',
+                     help='Тебе НУЖНО: 1) Передать expected_current=claim_id прочитанной версии строкой. 2) Взять его из dom_claim_versions. 3) Повторить dom_update.')
     if expected_current is not None or mode != 'auto':
         return _guarded_update(svc, claim_id, text, reason, idempotency_key, anatomy, expected_current, mode)
     return _plain_update(svc, claim_id, text, reason, idempotency_key, anatomy)
@@ -856,7 +921,7 @@ def _guarded_update(svc, claim_id, text, reason, idempotency_key, anatomy, expec
     mode=fork (only after reading, only over another author's version) records the
     caller's text as a parallel variant: both versions are current, linked by
     variant_of and an open conflict that dom_reconcile resolves when they converge."""
-    Denied = _denied()
+    Denied = _denied_for('dom_update')
     _lite_only(svc)
     svc.scope()
     svc.capability('submit')
@@ -893,7 +958,7 @@ def _archived_now(svc):
 
 
 def _fork(svc, current, text, reason, base_author):
-    Denied = _denied()
+    Denied = _denied_for('dom_update')
     from . import planning
     if type(reason) is not str or not reason.strip():
         raise Denied('INVALID_FIELD', field='reason')
@@ -938,7 +1003,7 @@ def _fork(svc, current, text, reason, base_author):
 
 
 def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=None):
-    Denied = _denied()
+    Denied = _denied_for('dom_update')
     _lite_only(svc)
     svc.scope()
     svc.capability('submit')
@@ -1112,7 +1177,7 @@ def _preview(body, query):
 
 
 def find(svc, query, branch, typ, requirement_ref, limit, plan_task=None, keyword=None, current_only=False):
-    Denied = _denied()
+    Denied = _denied_for('dom_find')
     svc.scope()
     svc.ready()
     if query is not None and type(query) is not str:
@@ -1122,7 +1187,8 @@ def find(svc, query, branch, typ, requirement_ref, limit, plan_task=None, keywor
     if requirement_ref is not None and type(requirement_ref) is not str:
         raise Denied('INVALID_FIELD', field='requirement_ref')
     if type(limit) is not int or not 1 <= limit <= 200:
-        raise Denied('INVALID_FIELD', field='limit', hint="'limit' must be an integer 1..200 (default 20).")
+        raise Denied('INVALID_FIELD', field='limit', hint="'limit' must be an integer 1..200 (default 20).",
+                     help='Тебе НУЖНО: 1) Передать limit целым числом от 1 до 200 (по умолчанию 20). 2) Повторить вызов.')
     if branch is not None:
         if type(branch) is not str or not branch:
             raise Denied('INVALID_FIELD', field='branch')
@@ -1185,27 +1251,33 @@ def find(svc, query, branch, typ, requirement_ref, limit, plan_task=None, keywor
 # --------------------------------------------------------------------- start --
 def start(svc, request, goal, branches, adopt):
     from .admission import IntegrityFailure, verify_chain
-    Denied = _denied()
+    Denied = _denied_for('dom_start')
     _lite_only(svc)
     if not svc.context.simulation:
         raise Denied('OMH_BINDING_UNVERIFIED')
     if request is None:
-        raise Denied('REQUEST_REQUIRED', field='request')
-    req_raw = _text_bytes(request, 'request')
+        raise Denied('REQUEST_REQUIRED', field='request',
+                     help=('Тебе НУЖНО: 1) Передать запрос заказчика дословно в request. '
+                           '2) Не передавать пустую строку. 3) Повторить dom_start.'))
+    req_raw = _text_bytes(request, 'request', 'dom_start')
     goal_raw = None
     if goal is not None:
         if type(goal) is not str or not goal.strip():
-            raise Denied('INVALID_FIELD', field='goal', hint="'goal' is optional; when given it must be a non-empty string (your one-line formulation).")
-        goal_raw = _text_bytes(goal, 'goal')
+            raise Denied('INVALID_FIELD', field='goal', hint="'goal' is optional; when given it must be a non-empty string (your one-line formulation).",
+                         help='Тебе НУЖНО: 1) Либо убрать goal. 2) Либо передать одну непустую строку. 3) Повторить dom_start.')
+        goal_raw = _text_bytes(goal, 'goal', 'dom_start')
     if branches is None:
         branches = ['main']
     if (type(branches) is not list or not branches or len(branches) > MAX_BRANCHES
             or any(type(b) is not str or not BRANCH_RE.match(b) for b in branches)):
         raise Denied('INVALID_FIELD', field='branches',
-                     hint="'branches' must be an array of 1..%d codes of [A-Za-z0-9_-]{1,32}, e.g. [\"main\", \"alt\"]." % MAX_BRANCHES)
+                     hint="'branches' must be an array of 1..%d codes of [A-Za-z0-9_-]{1,32}, e.g. [\"main\", \"alt\"]." % MAX_BRANCHES,
+                     help=('Тебе НУЖНО: 1) Передать branches массивом кодов [A-Za-z0-9_-]{1,32}. '
+                           '2) Например ["main"] или ["main", "alt"]. 3) Повторить dom_start.'))
     branches = list(dict.fromkeys(branches))
     if type(adopt) is not bool:
-        raise Denied('INVALID_FIELD', field='adopt')
+        raise Denied('INVALID_FIELD', field='adopt',
+                     help='Тебе НУЖНО: 1) Передать adopt=true или adopt=false. 2) adopt=true — только если база в каталоге твой проект. 3) Повторить dom_start.')
     main = branches[0]
 
     state, existing, root, foreign = 'missing', set(), None, None
@@ -1224,7 +1296,10 @@ def start(svc, request, goal, branches, adopt):
     adopt_info = None
     if state == 'foreign':
         if not adopt:
-            raise Denied('SCOPE_DENIED')
+            raise Denied('SCOPE_DENIED',
+                         help=('Тебе НУЖНО: 1) Понять, что база в каталоге привязана к другой работе. '
+                               '2) Если это твой проект — повторить dom_start с тем же request и adopt=true. '
+                               '3) Иначе сменить каталог.'))
         with svc.store.read() as c:
             chain = verify_chain(c)
         if chain['status'] != 'CHAIN_OK':
@@ -1232,13 +1307,18 @@ def start(svc, request, goal, branches, adopt):
         adopt_info = {'source_work': foreign, 'chain_hash': chain['head_hash'] if chain['events'] else '0' * 64, 'at': _now()}
     if root is not None:
         if root['request_sha256'] != raw_hash(req_raw):
-            raise Denied('ROOT_CONFLICT', field='request')
+            raise Denied('ROOT_CONFLICT', field='request',
+                         help=('Тебе НУЖНО: 1) Повторить dom_start с ИСХОДНЫМ request из базы. '
+                               '2) Корень неизменяем; уточнения — отдельным claim через dom_claim. 3) Goal уточнять через dom_update.'))
         if goal_raw is not None and root['goal_sha256'] != raw_hash(goal_raw):
-            raise Denied('ROOT_CONFLICT', field='goal')
+            raise Denied('ROOT_CONFLICT', field='goal',
+                         help=('Тебе НУЖНО: 1) Повторить dom_start с исходным goal или без goal. '
+                               '2) Уточнить goal отдельным dom_update goal-claim. 3) Корень не перезаписывать.'))
     try:
         svc.store.initialize(svc.context.work, svc.policy, branches=tuple(branches), declare=tuple(branches), adopt=adopt_info)
     except ValueError:
-        raise Denied('SCOPE_DENIED') from None
+        raise Denied('SCOPE_DENIED',
+                     help='Тебе НУЖНО: 1) Проверить, что база в каталоге — твой проект. 2) При необходимости повторить с adopt=true. 3) Иначе сменить каталог.') from None
     from .admission import record_review_mode
     with svc.store.transaction() as c:
         record_review_mode(c, svc.launch_review_mode)
@@ -1647,6 +1727,17 @@ TOOL_DOCS['dom_skill_select'] = {
     },
     'returns': 'status SKILLS_SELECTED, block (<=800 chars, what/why/how + prefetch + gap line), queue, advisory, gaps, prefetch, missing_caps, groups, confidence_bp (integer basis points), signals.',
     'example': {'step': {'title': 'Add the sqlite migration for the ledger schema', 'cap': ['sqlite', 'migration'], 'category_hint': 'databases'}},
+}
+
+# Usage help for one DOM tool (contract 4.3): a read-only table lookup in
+# HELP_DATA.py. Use it when a tool refused or when the next call is unclear.
+TOOL_DOCS['dom_help'] = {
+    'summary': 'Read-only usage help for one DOM tool: its call signature, what to do before and after it, the usual refusals with their fix, and a short imperative help text. Ask it when a tool refused or when you are unsure what to call next.',
+    'arguments': {
+        'tool': _arg('string', True, 'Tool to explain, e.g. dom_claim, dom_find, dom_update. Every registered tool has an entry.'),
+    },
+    'returns': 'status OK, tool, usage, preconditions[], postconditions[], common_errors[{code, cause, fix}], help. An unknown tool is refused with INVALID_FIELD (field=tool); a missing tool with INVALID_ARGUMENTS.',
+    'example': {'tool': 'dom_claim'},
 }
 
 LITE_TOOL_NAMES = tuple(TOOL_DOCS)
