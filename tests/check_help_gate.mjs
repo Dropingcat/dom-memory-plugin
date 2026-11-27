@@ -51,28 +51,74 @@ test("the embedded subset is a small dom_* map with bounded help text", () => {
 
 test("an error event yields {tool, help} and logs the injection once", () => {
   const { value, lines } = captured(() =>
-    applyHelpGate({ tool: "dom_update", error: new Error("CONFLICT_READ_REQUIRED") }),
+    applyHelpGate(
+      { tool: "dom_update", error: new Error("CONFLICT_READ_REQUIRED") },
+      undefined,
+      { enabled: true },
+    ),
   )
   assert.equal(value.tool, "dom_update")
   assert.equal(value.help, helpFor("dom_update"))
   assert.equal(lines.length, 1)
   assert.match(lines[0], /\[dom-memory hooks\] error help: dom_update failed -> injected/)
+
+  // BUG-2: the host reports the server-prefixed MCP name.
+  const prefixed = captured(() =>
+    applyHelpGate(
+      { tool: "dom-memory_dom_claim", error: new Error("INVALID_FIELD") },
+      undefined,
+      { enabled: true },
+    ),
+  )
+  assert.equal(prefixed.value.tool, "dom_claim")
+  assert.equal(prefixed.value.help, helpFor("dom_claim"))
 })
 
 test("an event without an error yields nothing", () => {
-  assert.equal(captured(() => applyHelpGate({ tool: "dom_claim", status: "ok" })).value, undefined)
-  assert.equal(captured(() => applyHelpGate({ tool: "dom_claim" })).value, undefined)
+  assert.equal(
+    captured(() => applyHelpGate({ tool: "dom_claim", status: "ok" }, undefined, { enabled: true }))
+      .value,
+    undefined,
+  )
+  assert.equal(
+    captured(() => applyHelpGate({ tool: "dom_claim" }, undefined, { enabled: true })).value,
+    undefined,
+  )
+  // The gate itself is off by default, even for a failed DOM call.
+  assert.equal(captured(() => applyHelpGate({ tool: "dom_claim", error: true })).value, undefined)
 })
 
 test("a non-DOM tool is ignored even when it fails", () => {
-  assert.equal(captured(() => applyHelpGate({ tool: "bash", error: true })).value, undefined)
-  assert.equal(captured(() => applyHelpGate({ tool: "dom", error: true })).value, undefined)
+  assert.equal(
+    captured(() => applyHelpGate({ tool: "bash", error: true }, undefined, { enabled: true }))
+      .value,
+    undefined,
+  )
+  assert.equal(
+    captured(() => applyHelpGate({ tool: "dom", error: true }, undefined, { enabled: true })).value,
+    undefined,
+  )
 })
 
 test("error may arrive as a status or in the host's output argument", () => {
-  assert.equal(captured(() => applyHelpGate({ tool: "dom_find", status: "error" })).value.tool, "dom_find")
-  assert.equal(captured(() => applyHelpGate({ tool: "dom_find" }, { isError: true })).value.tool, "dom_find")
-  assert.equal(captured(() => applyHelpGate({ tool: "dom_find" }, { output: "boom" })).value, undefined)
+  assert.equal(
+    captured(() =>
+      applyHelpGate({ tool: "dom_find", status: "error" }, undefined, { enabled: true }),
+    ).value.tool,
+    "dom_find",
+  )
+  assert.equal(
+    captured(() =>
+      applyHelpGate({ tool: "dom_find" }, { isError: true }, { enabled: true }),
+    ).value.tool,
+    "dom_find",
+  )
+  assert.equal(
+    captured(() =>
+      applyHelpGate({ tool: "dom_find" }, { output: "boom" }, { enabled: true }),
+    ).value,
+    undefined,
+  )
 })
 
 test("register wires execute.after into the dom-help instruction entry", async () => {
@@ -80,7 +126,13 @@ test("register wires execute.after into the dom-help instruction entry", async (
   const handlers = {}
   const put = []
   const ctx = {
-    options: { projectDir: dir, pythonPath: PY, planDir: join(dir, "plans"), timeoutMs: 5000 },
+    options: {
+      projectDir: dir,
+      pythonPath: PY,
+      planDir: join(dir, "plans"),
+      timeoutMs: 5000,
+      helpGate: true,
+    },
     location: { directory: dir },
     session: {
       hook: async (name, fn) => {
@@ -101,7 +153,8 @@ test("register wires execute.after into the dom-help instruction entry", async (
     assert.equal(typeof handlers["execute.after"], "function")
     assert.equal(typeof handlers["execute.before"], "function")
 
-    await handlers["execute.after"]({ tool: "dom_claim", error: new Error("INVALID_FIELD") })
+    // BUG-2: OpenCode reports the server-prefixed MCP name on the hook event.
+    await handlers["execute.after"]({ tool: "dom-memory_dom_claim", error: new Error("INVALID_FIELD") })
     assert.equal(put.length, 1)
     assert.equal(put[0][0], "dom-help")
     assert.match(put[0][1], /^⚠️ dom_claim failed\. /)

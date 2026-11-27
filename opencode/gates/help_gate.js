@@ -14,7 +14,20 @@
  * The subset lives in JS, so it cannot read HELP_DATA.py at runtime; when the
  * Python help text changes, update this map too.  `tests/check_help_gate.mjs`
  * pins the shape (non-empty, ≤500 chars, dom_* keys) so drift is visible.
+ *
+ * BUG-2: hosted MCP calls arrive server-prefixed (`dom-memory_dom_claim`), so
+ * `applyHelpGate` normalizes the name to the `dom_*` namespace before lookup.
  */
+
+/**
+ * Master switch for the advisory error-help gate.
+ *
+ * Off by default: enabling it assumes the host really fires `execute.after` for
+ * MCP tool calls and may report the server-prefixed name.  Set the plugin
+ * option `helpGate: true` (or flip this constant) only after a live probe has
+ * confirmed both; until then the injected help line is dead weight.
+ */
+export const HELP_GATE_ENABLED = false
 
 /** @type {Record<string, string>} */
 export const HELP_DATA = {
@@ -68,18 +81,39 @@ function isErrorEvent(event, output) {
 }
 
 /**
+ * Normalize a host tool name to the DOM namespace.
+ *
+ * MCP hosts prefix the name with the server id, e.g. `dom-memory_dom_claim`;
+ * dropping the first `_`-separated segment recovers `dom_claim`.  A native
+ * `dom_*` name is returned untouched, and anything else is returned as-is so
+ * the caller can reject it.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function normalizeToolName(value) {
+  if (typeof value !== "string") return ""
+  if (value.includes("_") && !value.startsWith("dom_")) {
+    return value.split("_").slice(1).join("_")
+  }
+  return value
+}
+
+/**
  * Pure decision: which help, if any, belongs to this tool event.
  *
  * @param {{tool?: string, toolID?: string, name?: string, error?: unknown}} event
  * @param {{isError?: boolean, error?: unknown}} [output]  host's second hook argument
+ * @param {{enabled?: boolean}} [options]  defaults to HELP_GATE_ENABLED
  * @returns {{tool: string, help: string} | undefined}
  */
-export function applyHelpGate(event, output) {
+export function applyHelpGate(event, output, options = {}) {
+  if (!(options?.enabled ?? HELP_GATE_ENABLED)) return undefined
   if (!isErrorEvent(event, output)) return undefined
-  const toolName = event?.tool ?? event?.toolID ?? event?.name
-  if (typeof toolName !== "string" || !toolName.startsWith("dom_")) return undefined
+  const toolName = normalizeToolName(event?.tool ?? event?.toolID ?? event?.name)
+  if (!toolName.startsWith("dom_")) return undefined
   console.log(`[dom-memory hooks] error help: ${toolName} failed -> injected`)
   return { tool: toolName, help: helpFor(toolName) }
 }
 
-export default { applyHelpGate, helpFor, HELP_DATA }
+export default { applyHelpGate, helpFor, normalizeToolName, HELP_DATA, HELP_GATE_ENABLED }

@@ -272,6 +272,25 @@ class Service:
     def candidate_only(self):
         """Agent-entered records wait for review instead of being admitted in the same call."""
         return self.review_mode in ('manual','independent') and not self._system
+    @property
+    def effective_policy(self):
+        """The review policy the read-before-write gate actually runs under.
+
+        A project that was ever run under a stricter policy keeps it
+        (``stored_review_mode``), exactly as ``_gate_check`` resolves it.
+        ``auto`` means the gate is off: read receipts are not checked and every
+        write (``dom_claim`` / ``dom_update`` / ``dom_annotate``) is admitted in
+        place.  ``manual`` / ``independent`` enforce the gate
+        (``GATE_NO_READ``).  Read-only: never records or promotes a policy.
+        """
+        mode=self.review_mode
+        if not self.store.path.exists(): return mode
+        try:
+            with self.store.read() as c: stored=stored_review_mode(c)
+        except (sqlite3.OperationalError,MigrationRequired):
+            return mode
+        if stored and REVIEW_STRICTNESS.get(stored,0)>REVIEW_STRICTNESS.get(mode,0): return stored
+        return mode
     def system(self):
         """Server-authored records (the verbatim root request, the plan mirror, replacement links of an
         admitted update, variant convergence) are admitted in place and labelled review_level='self'."""

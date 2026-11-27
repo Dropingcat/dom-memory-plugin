@@ -44,7 +44,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createObservability, preview, sha256 } from "./observability.js"
-import { applyHelpGate } from "./gates/help_gate.js"
+import { applyHelpGate, HELP_GATE_ENABLED } from "./gates/help_gate.js"
 import { checkReemit, computeFingerprint } from "./gates/tau_gate.js"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -484,11 +484,14 @@ export async function register(ctx) {
 
   /* Error help: a failed DOM call injects an actionable help line as the
      `dom-help` instruction entry.  Advisory only — the error itself is never
-     masked, and a gate failure never throws into the host. */
+     masked, and a gate failure never throws into the host.
+     Off unless `helpGate: true` is set: BUG-2 showed the host may never fire
+     `execute.after` for MCP tools, so the gate waits for a live probe. */
+  const helpGateEnabled = options.helpGate ?? HELP_GATE_ENABLED
   const executeAfter = (event, output) => {
     let result
     try {
-      result = applyHelpGate(event, output)
+      result = applyHelpGate(event, output, { enabled: helpGateEnabled })
     } catch (caught) {
       console.error("[dom-memory hooks] help-gate:", caught)
       return

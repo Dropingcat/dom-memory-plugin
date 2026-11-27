@@ -1948,6 +1948,9 @@ def describe(svc):
                           'meaning': {'auto': 'every write is admitted at once, review_level=self',
                                       'manual': 'every write waits as a candidate for dom_accept',
                                       'independent': 'a different principal (DOM_PRINCIPAL) must review and admit'}[svc.review_mode]},
+        # BUG-3: the read-before-write gate is OFF in auto mode by design; the
+        # effective policy (launch or a stricter stored one) is the answer.
+        'read_gate': str(svc.effective_policy),
         'work_ref': work, 'branches': branches, 'tools': tools, 'claim_types': claim_type_examples() if svc.lite else {},
         'tool_docs': 'Full arguments, returns and example for one name: dom_help({"tool": "<name>"}).',
         'cycle': cycle,
@@ -1966,6 +1969,9 @@ def describe(svc):
             'Claims and quotes are immutable; there is no delete. dom_update adds a version.',
             'goal_confirmed stays false until the customer confirms; there is no confirm tool in this slice.',
             'profile, review_level, principal and work are fixed at server launch and cannot be passed as arguments.',
+            'read_gate is the effective policy: auto = no read gate (read receipts are not checked; dom_claim, '
+            'dom_update and dom_annotate are admitted in place); manual/independent = GATE_NO_READ until this '
+            'session has read the claim.',
             'Branch codes are [A-Za-z0-9_-]{1,32}; declare them with dom_start.'],
         'next_steps': next_steps,
     }

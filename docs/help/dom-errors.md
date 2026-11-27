@@ -135,6 +135,10 @@ B. [Приложение B. Статусы, которые не являются
 | TASK_ARCHIVED | dom_claim | Пункт плана удалён из плана и заархивирован. | Привязать claim к текущему пункту из `dom_plan_tree`. |
 | IDEMPOTENCY_MISMATCH | dom_submit, dom_claim, dom_update (и любой write с idempotency_key) | Тот же `idempotency_key` уже использован для другого содержимого. | Для нового содержимого взять свежий ключ; для повтора — тот же ключ и те же данные. |
 
+### 2.3.1 Read-gate и режимы policy
+
+Gate работает только в manual/independent режиме. В auto mode read receipts не проверяются — все write-операции проходят без gate. Это относится к `dom_claim`, `dom_update` и `dom_annotate`: под `auto` они адмитятся сразу, `GATE_NO_READ` не возникает, даже если claim из `basis` не читался этой сессией. `dom_describe.read_gate` показывает фактический режим (launch-политика либо более строгая, под которой проект уже работал); `dom_describe.review_policy.mode` — режим запуска. `GATE_NO_READ` — только диагностика: отказ типизированный, ничего не записано, повтор после `dom_find`/`dom_context` безопасен.
+
 ### 2.4 Review и admission
 
 | Код | Инструменты | Причина | Решение |

@@ -346,6 +346,8 @@ RECORDS.update({
         'review_level': ('opaque',), 'readiness': ('opaque',), 'limits': ('list', 'str'),
         'next_steps': ('list', 'NextStep'),
         'integrity': ('null', 'str'), 'review_policy': ('opaque',),
+        # BUG-3: the policy the read-before-write gate runs under ('auto' = no gate).
+        'read_gate': 'str',
         'directory': 'str', 'db_path': 'str',
         # L4/L5: session channel and cross-channel database-path health.
         'session': ('opaque',), 'db': ('opaque',), 'health': ('opaque',),
