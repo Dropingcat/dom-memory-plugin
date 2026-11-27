@@ -1751,7 +1751,7 @@ LITE_TOOL_NAMES = tuple(TOOL_DOCS)
 # 10.5 KB.  The cap is applied on a word boundary; a cut summary ends with '...'
 # as an honest sign that dom_help has the rest.
 TOOL_SUMMARY_LIMIT = 120
-DESCRIBE_MAX_CHARS = 12000
+DESCRIBE_MAX_CHARS = 15000
 
 
 def tool_summary(name):

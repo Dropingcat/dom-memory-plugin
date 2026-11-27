@@ -310,7 +310,7 @@ def select_step(step, queue=None, plan_version: int = 0, index_digest: str = '',
     fingerprint = _steps.BlockFingerprint.from_step(
         step_obj, digest, plan_version=step_obj.plan_version).digest()
     block = _render.render_block(step_obj, current_analysis, prefetch_entries, [], [],
-                                 block_gaps, fingerprint)
+                                 block_gaps, fingerprint, step_cap=list(step_obj.cap))
 
     return {
         'status': STATUS,

@@ -11,6 +11,8 @@ Covers all invariant and metric requirements:
 * F4 -- retrospective: precision@1 and recall@k on labelled steps.
 * F5 -- regression: the legacy ``skill_router.select`` contract is untouched and the
   pipeline imports no ledger/database module.
+* F6 -- step bounds (BUG-4): an over-long title/context is clipped and the gap list is
+  capped, so one oversized step cannot inflate the answer.
 
 Self-contained: fixtures are hand-built SkillRecords, no network, no user home, no DB.
 
@@ -32,6 +34,7 @@ from mockup import skill_router as legacy  # noqa: E402
 from mockup import skill_select as ss  # noqa: E402
 from mockup.skill_index import SkillRecord, parse_skill_file  # noqa: E402
 from mockup.skill_render import TOTAL_BUDGET  # noqa: E402
+from mockup.step_registry import CONTEXT_LIMIT, MicroStep  # noqa: E402
 
 FLOAT_RE = re.compile(r"\d+\.\d+")
 MAX_TOKENS = 200                 # ~4 chars/token; the hard budget is 800 chars
@@ -187,14 +190,11 @@ def check_invariants() -> dict:
 # ---------------------------------------------------------------------------
 
 def check_negative_control() -> dict:
-    # 2. Zero signals -> empty queue, but the unselected skills stay visible as gaps
-    #    and the block still carries an explicit gap line (never "gaps: none").
+    # 2. Zero signals -> empty queue; without declared capabilities the block says
+    #    "gaps: not-declared" (FAIL-1b: an empty set is not masked as "none").
     zero = run(ZERO_STEP)
     assert zero["queue"] == [] and zero["advisory"] == [], zero
-    assert zero["gaps"], zero
-    assert set(zero["gaps"]) == {skill.skill_id for skill in SKILLS}, zero["gaps"]
-    assert "gap:" in zero["block"], zero["block"]
-    assert "gaps: none" not in zero["block"], zero["block"]
+    assert "gaps: not-declared" in zero["block"], zero["block"]
     assert len(zero["block"]) <= TOTAL_BUDGET, len(zero["block"])
 
     # A description-only "provider": mentions exist, provides do not.  A lexical hit
@@ -306,20 +306,58 @@ def check_regression() -> dict:
     return {"legacy_top": selected["current"][0]["id"]}
 
 
+# ---------------------------------------------------------------------------
+# F6 -- step bounds (BUG-4 STEP-BOUNDS)
+# ---------------------------------------------------------------------------
+
+def check_step_bounds() -> dict:
+    # A title/context above the budget is clipped before any stage sees it, so the
+    # answer is identical to the already-bounded step and the block stays in budget.
+    long_title = "sqlite migration for the ledger schema " * 60    # > MAX_TITLE
+    long_context = "ledger claim version " * 400                   # > CONTEXT_LIMIT
+    bounded = run(step("s-bounds", long_title, long_context, ("sqlite",), "databases"))
+    assert len(bounded["block"]) <= TOTAL_BUDGET, len(bounded["block"])
+    assert bounded["queue"], bounded["queue"]
+    clipped = run(step("s-bounds", long_title[:ss.MAX_TITLE],
+                       long_context[:CONTEXT_LIMIT], ("sqlite",), "databases"))
+    assert bounded == clipped, "an over-long step must be clipped, not routed differently"
+
+    # The same bound holds for an already-built (frozen) MicroStep.
+    oversized = MicroStep(step_id="s-direct", title=long_title, parent_plan_task_id="",
+                          plan_version=0, cap=("sqlite",), category_hint="databases",
+                          markers=("action:modify",), context="ledger")
+    direct = run(oversized)
+    assert direct == run(step("s-direct", long_title[:ss.MAX_TITLE], "ledger", ("sqlite",),
+                              "databases", ("action:modify",))), direct["block"]
+
+    # The gap list is a pointer to skill_search, never a dump of the whole index.
+    many = [record("skill-%02d" % index, "unrelated topic number %d" % index, ("misc",))
+            for index in range(25)]
+    capped = run(step("s-gaps", ""), skills=many, cards=[])
+    assert capped["queue"] == [], capped["queue"]
+    assert len(capped["gaps"]) == ss.MAX_GAPS + 1, capped["gaps"]
+    assert capped["gaps"][-1] == "... and 5 more", capped["gaps"]
+
+    return {"title_chars": len(long_title), "gaps": len(capped["gaps"])}
+
+
 def main() -> int:
     invariants = check_invariants()
     negative = check_negative_control()
     economics = check_economics()
     retrospective = check_retrospective()
     regression = check_regression()
+    bounds = check_step_bounds()
 
     print(
         "PASS skill_pipeline: queue=%s (>=3 signals), block %d<=800 chars, no floats, "
         "deterministic, zero-signal gaps=%d, mention gap visible, %d tokens, "
-        "p50=%.2fms, precision@1=%.2f recall@3=%.2f, legacy top=%s"
+        "p50=%.2fms, precision@1=%.2f recall@3=%.2f, legacy top=%s, "
+        "bounded title=%d chars, gaps=%d"
         % (invariants["queue"], invariants["block_chars"], negative["zero_gaps"],
            economics["tokens"], economics["p50_ms"], retrospective["precision@1"],
-           retrospective["recall@3"], regression["legacy_top"])
+           retrospective["recall@3"], regression["legacy_top"], bounds["title_chars"],
+           bounds["gaps"])
     )
     return 0
 
