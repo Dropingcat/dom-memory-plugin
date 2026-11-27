@@ -68,6 +68,7 @@ def main() -> int:
         bm25_in_top=False,
         marker_overlap=False,
         cap_provided=False,
+        mention_match=False,
         card_verified=False,
     )
     try:
@@ -89,6 +90,7 @@ def main() -> int:
             bm25_in_top=False,
             marker_overlap=False,
             cap_provided=False,
+            mention_match=False,
             card_verified=False,
         )
     except ValueError:
@@ -285,7 +287,7 @@ def main() -> int:
 
     e2e = e2e_selector.select_skills(skills, e2e_step, cards, ConsensusFilter(), e2e_groups)
     assert [v.skill_id for v in e2e["queue"]] == ["dom-memory", "sqlite-migration"], e2e["queue"]
-    assert all(v.confidence_bp == 6000 for v in e2e["queue"]), e2e["queue"]
+    assert all(v.confidence_bp == 7500 for v in e2e["queue"]), e2e["queue"]
     visible = {v.skill_id for v in verdict_rows(e2e)} | set(e2e["gaps"])
     assert "pde-solver" not in visible and "rdkit" not in visible, visible
 

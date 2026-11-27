@@ -86,6 +86,8 @@ class SkillRecord:
     source_path: str = ''
     content_digest: str = ''           # sha256 of the raw file bytes
     verified_provides: tuple[str, ...] = ()  # curated card only (B5); never from text
+    card_only: bool = False                  # True when this record was created from a card, not a SKILL.md file
+    card_only: bool = False                  # skill exists only in cards, not as SKILL.md
 
     def __post_init__(self):
         # A hand-built record must obey the same tuple invariants as a parsed one.
@@ -356,8 +358,12 @@ class SkillIndex:
     def __init__(self, cache_dir=None):
         self.cache_dir = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
 
-    def collect(self, roots: Optional[list[Path]] = None) -> list[SkillRecord]:
-        """Walk roots in precedence order; a later root overrides the same skill_id."""
+    def collect(self, roots: Optional[list[Path]] = None, cards_path: Optional[Path] = None) -> list[SkillRecord]:
+        """Walk roots in precedence order; a later root overrides the same skill_id.
+
+        If ``cards_path`` is None (default), merge card-only skills from
+        ``<repo>/opencode/mockup/skills.card.json``.  Pass ``cards_path=False`` to skip.
+        """
         roots = SKILL_ROOTS if roots is None else roots
         collected: dict[str, SkillRecord] = {}
         for root in roots:
@@ -374,6 +380,27 @@ class SkillIndex:
                 except OSError:
                     continue
                 collected[record.skill_id] = record
+        # 2. Merge card-only skills from skills.card.json (virtual skills without SKILL.md)
+        cards_source = cards_path if cards_path is not None else Path(__file__).resolve().parents[1] / 'mockup' / 'skills.card.json'
+        if cards_source:
+            try:
+                cards_path_resolved = Path(cards_source) if isinstance(cards_source, str) else cards_source
+                if cards_path_resolved.is_file():
+                    cards_data = json.loads(cards_path_resolved.read_text(encoding='utf-8'))
+                    for card in cards_data.get('cards', []):
+                        cid = str(card.get('id', '')).strip()
+                        if not cid or cid in collected:
+                            continue
+                        collected[cid] = SkillRecord(
+                            skill_id=cid,
+                            name=str(card.get('name', cid)),
+                            description='Card-only skill: %s' % card.get('evidence', ''),
+                            categories=(str(card.get('category', '')),) if card.get('category') else (),
+                            verified_provides=tuple(str(p).strip() for p in card.get('provides', []) if p),
+                            card_only=True,
+                        )
+            except (OSError, ValueError, TypeError):
+                pass  # no cards file = no card-only skills; that is fine
         return sorted(collected.values(), key=lambda row: row.skill_id)
 
     def build_cache(self, skills: list[SkillRecord]) -> dict:

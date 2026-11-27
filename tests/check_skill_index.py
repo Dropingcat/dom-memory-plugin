@@ -74,8 +74,8 @@ def main() -> int:
             "category: coding"))
 
         index = si.SkillIndex(cache_dir=cache_dir)
-        skills = index.collect([main_root])
-        assert skills == index.collect([main_root]), "collect must be deterministic"
+        skills = index.collect([main_root], cards_path=False)
+        assert skills == index.collect([main_root], cards_path=False), "collect must be deterministic"
         assert [row.skill_id for row in skills] == sorted(row.skill_id for row in skills), skills
         assert len(skills) == 7, [row.skill_id for row in skills]
 
@@ -137,9 +137,9 @@ def main() -> int:
         root_b = tmp / "root-b"
         write_skill(root_a, "molecule-design", skill_text("molecule-design", "root A version", when=None, example=False))
         write_skill(root_b, "molecule-design", skill_text("molecule-design", "root B version", when=None, example=False))
-        assert index.collect([root_a, root_b])[0].description == "root B version"
-        assert index.collect([root_b, root_a])[0].description == "root A version"
-        assert index.collect([tmp / "missing-root"]) == [], "missing roots are skipped, not fatal"
+        assert index.collect([root_a, root_b], cards_path=False)[0].description == "root B version"
+        assert index.collect([root_b, root_a], cards_path=False)[0].description == "root A version"
+        assert index.collect([tmp / "missing-root"], cards_path=False) == [], "missing roots are skipped, not fatal"
 
         # 6. The proposer assigns a category to an uncategorized skill and skips categorized ones.
         proposer = si.CategoryProposer([row for row in skills if row.categories])

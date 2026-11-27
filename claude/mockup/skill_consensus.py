@@ -32,6 +32,7 @@ SIGNAL_WEIGHTS: dict[str, int] = {
     'bm25': 2000,
     'marker': 2000,
     'cap': 2500,
+    'mention': 1500,
     'card': 1000,
 }
 
@@ -62,7 +63,8 @@ class ConsensusVerdict:
     group_match: bool
     bm25_in_top: bool
     marker_overlap: bool
-    cap_provided: bool
+    cap_provided: bool         # only verified_provides (cards); NEVER mentions
+    mention_match: bool        # mentions overlap (text only); NOT provides
     card_verified: bool
 
     def __post_init__(self):
@@ -85,7 +87,7 @@ class ConsensusVerdict:
                 raise ValueError('confidence_bp must be an integer, got %r' % (self.confidence_bp,))
         if not 0 <= self.confidence_bp <= MAX_CONFIDENCE_BP:
             raise ValueError('confidence_bp out of range: %r' % (self.confidence_bp,))
-        for flag in ('group_match', 'bm25_in_top', 'marker_overlap', 'cap_provided', 'card_verified'):
+        for flag in ('group_match', 'bm25_in_top', 'marker_overlap', 'cap_provided', 'mention_match', 'card_verified'):
             object.__setattr__(self, flag, bool(getattr(self, flag)))
 
 
@@ -157,9 +159,15 @@ def _step_actions(step_markers) -> set[str]:
     return actions
 
 
-def _cap_tokens(skill) -> set[str]:
+def _provides_tokens(skill) -> set[str]:
+    """Tokens from verified_provides ONLY (curated cards). Empty for SKILL.md-only skills."""
     tokens = {str(item).strip().lower() for item in _tuple(_field(skill, 'verified_provides', ()))}
-    tokens.update(str(item).strip().lower() for item in _tuple(_field(skill, 'mentions', ())))
+    return {token for token in tokens if token}
+
+
+def _mentions_tokens(skill) -> set[str]:
+    """Tokens from mentions (derived from description text). NEVER provides."""
+    tokens = {str(item).strip().lower() for item in _tuple(_field(skill, 'mentions', ()))}
     return {token for token in tokens if token}
 
 
@@ -217,7 +225,8 @@ class ConsensusFilter:
         marker_overlap = bool(action_overlap)
 
         caps = {str(cap).strip().lower() for cap in _tuple(step_cap) if str(cap).strip()}
-        cap_provided = bool(caps & _cap_tokens(skill_record))
+        cap_provided = bool(caps & _provides_tokens(skill_record))
+        mention_match = bool(caps & _mentions_tokens(skill_record))
 
         card = skill_card if isinstance(skill_card, dict) else None
         card_id = str((card or {}).get('id') or (card or {}).get('skill_id') or '').strip()
@@ -229,6 +238,7 @@ class ConsensusFilter:
             'bm25': bm25_in_top,
             'marker': marker_overlap,
             'cap': cap_provided,
+            'mention': mention_match,
             'card': card_verified,
         }
         signals = tuple(sorted(name for name, matched in flags.items() if matched))
@@ -242,6 +252,7 @@ class ConsensusFilter:
             bm25_in_top=bm25_in_top,
             marker_overlap=marker_overlap,
             cap_provided=cap_provided,
+            mention_match=mention_match,
             card_verified=card_verified,
         )
 
