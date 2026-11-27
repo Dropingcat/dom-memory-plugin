@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Run an OpenCode live session against the project DOM plugin with an isolated dev config.
+    Run an OpenCode live session against the project DOM plugin with a dedicated dev config.
 
 .DESCRIPTION
     Sets OPENCODE_CONFIG to <repo>/opencode/opencode.dev.json for the duration of one
@@ -94,7 +94,7 @@ if (-not $cli) {
 Write-Host "OPENCODE_CONFIG = $configPath"
 Write-Host "CLI             = $cli"
 Write-Host "Workdir         = $repoRoot"
-Write-Warning "Global DOM plugin is BYPASSED: this dev config loads only the project plugin (id: dom-memory.hooks)."
+Write-Warning "Dev config declares only the project plugin (id: dom-memory.hooks); other config layers still merge. Verify the '[dom-memory hooks] root=' line below."
 
 $promptArgs = @()
 if ($Prompt) { $promptArgs += $Prompt }
@@ -111,7 +111,6 @@ $runArgs = @(
 
 $previousConfig = $env:OPENCODE_CONFIG
 $env:OPENCODE_CONFIG = $configPath
-$exitCode = 1
 $exitCode = 1
 
 Push-Location $repoRoot
