@@ -341,6 +341,8 @@ RECORDS.update({
         'status': 'str', 'profile': 'str', 'simulated': 'bool', 'state': 'str',
         'summary': 'str', 'work_ref': ('null', 'str'), 'branches': ('list', 'str'),
         'tools': ('opaque',), 'claim_types': ('opaque',), 'cycle': ('list', 'str'),
+        # L7: the tools field is an index; this says where the full docs live.
+        'tool_docs': 'str',
         'review_level': ('opaque',), 'readiness': ('opaque',), 'limits': ('list', 'str'),
         'next_steps': ('list', 'NextStep'),
         'integrity': ('null', 'str'), 'review_policy': ('opaque',),

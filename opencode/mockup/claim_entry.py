@@ -1385,9 +1385,9 @@ _TYPE_DOC = ', '.join(TYPES)
 
 TOOL_DOCS = {
     'dom_describe': {
-        'summary': 'Describe this server and how to use it: profile (lite/strict), the simulated flag, every tool with its arguments, the 7 claim types with a valid example call each, the write->find->update cycle, what review_level and the two readiness numbers mean. Read-only; takes no arguments. Call it first.',
+        'summary': 'Describe this server and how to use it: profile (lite/strict), the simulated flag, every tool name with a one-line summary (full arguments live in dom_help), the 7 claim types with a valid example call each, the write->find->update cycle, what review_level and the two readiness numbers mean. Read-only; takes no arguments. Call it first.',
         'arguments': {},
-        'returns': 'status DESCRIBED, state (NOT_STARTED|READY|FOREIGN_BASE), tools, claim_types, cycle, review_level, readiness, limits, next_steps.',
+        'returns': 'status DESCRIBED, state (NOT_STARTED|READY|FOREIGN_BASE), tools (index: name + summary only; full docs via dom_help), claim_types, cycle, review_level, readiness, limits, next_steps.',
         'example': {},
     },
     'dom_start': {
@@ -1720,7 +1720,7 @@ TOOL_DOCS['dom_claim']['summary'] += (' Required per type (refused with MISSING_
 TOOL_DOCS['dom_skill_select'] = {
     'summary': 'Select the top-3 skills for the current micro-step. Read-only and deterministic: the same step, skills and cards always produce the same ids and the same block. The multi-marker classifier needs at least two independent signals, a skill enters the queue only with at least three, and every gap stays visible.',
     'arguments': {
-        'step': _arg('object', True, 'The micro-step: {title, context, cap[], markers, category_hint, claims[], step_id, plan_version}. Missing fields are derived, never invented.'),
+        'step': _arg('object', False, 'The micro-step: {title, context, cap[], markers, category_hint, claims[], step_id, plan_version}. Missing fields are derived, never invented. If absent, INVALID_ARGUMENTS with Russian help is returned.'),
         'queue': _arg('array', False, 'Next 0-3 micro-steps (same shape), used only to prefetch their top skill id.'),
         'plan_version': _arg('integer', False, 'Plan version for the block fingerprint (default: the step value or 0).'),
         'index_digest': _arg('string', False, 'sha256 of the skill index; omitted means it is computed from the records.'),
@@ -1734,13 +1734,36 @@ TOOL_DOCS['dom_skill_select'] = {
 TOOL_DOCS['dom_help'] = {
     'summary': 'Read-only usage help for one DOM tool: its call signature, what to do before and after it, the usual refusals with their fix, and a short imperative help text. Ask it when a tool refused or when you are unsure what to call next.',
     'arguments': {
-        'tool': _arg('string', True, 'Tool to explain, e.g. dom_claim, dom_find, dom_update. Every registered tool has an entry.'),
+        'tool': _arg('string', False, 'Tool to explain, e.g. dom_claim, dom_find, dom_update. Every registered tool has an entry. Optional: if it is missing or empty, the call is not rejected by the schema; the handler answers INVALID_ARGUMENTS with Russian help.'),
     },
     'returns': 'status OK, tool, usage, preconditions[], postconditions[], common_errors[{code, cause, fix}], help. An unknown tool is refused with INVALID_FIELD (field=tool); a missing tool with INVALID_ARGUMENTS.',
     'example': {'tool': 'dom_claim'},
 }
 
 LITE_TOOL_NAMES = tuple(TOOL_DOCS)
+
+# L7 (BUG-5): dom_describe is an index, not the manual.  Each tool contributes a
+# name and ONE line; the full arguments/returns/example stay in dom_help, so the
+# first call of a session does not carry the whole TOOL_DOCS (31 tools).
+# The spec's 200-char cap still let the payload reach 13.4 KB, over the 12 KB
+# budget; the per-type optional lists were also repeated seven times.  A
+# 120-char one-liner plus the claim-type trim keeps the whole answer near
+# 10.5 KB.  The cap is applied on a word boundary; a cut summary ends with '...'
+# as an honest sign that dom_help has the rest.
+TOOL_SUMMARY_LIMIT = 120
+DESCRIBE_MAX_CHARS = 12000
+
+
+def tool_summary(name):
+    text = ' '.join((TOOL_DOCS[name].get('summary') or '').split())
+    if len(text) <= TOOL_SUMMARY_LIMIT:
+        return text
+    cut = text[:TOOL_SUMMARY_LIMIT].rsplit(' ', 1)[0].rstrip(' ,;:')
+    return (cut or text[:TOOL_SUMMARY_LIMIT]) + '...'
+
+
+def tool_index():
+    return [{'name': n, 'summary': tool_summary(n)} for n in TOOL_DOCS]
 
 
 def compose_description(name):
@@ -1804,14 +1827,16 @@ _CLAIM_WHEN = {
 
 
 def claim_type_examples():
+    # L7 (BUG-5): an index of the 7 types, not the manual.  The common optional
+    # arguments (requirement_refs, reason, origin_version, idempotency_key) and
+    # the per-type allowed list live in dom_help({"tool": "dom_claim"}) and in
+    # the tool input schema; repeating them seven times cost ~1.3 KB and left no
+    # room for the path copies inside the 12 KB budget of dom_describe.
     out = {}
     for t in TYPES:
-        allowed = list(TYPE_ARGS[t])
         out[t] = {
             'use_for': _CLAIM_WHEN[t],
             'required': ['branch', 'type', 'text'] + list(REQUIRED_FIELDS.get(t, ())),
-            'optional_common': ['requirement_refs', 'reason', 'origin_version', 'idempotency_key'],
-            'optional_type_specific': allowed,
             'example_call': {'tool': 'dom_claim', 'arguments': _CLAIM_EXAMPLES[t]},
         }
     return out
@@ -1837,6 +1862,23 @@ def _db_health(svc):
     mismatch = [p for p in seen if not same_db_path(p, expected)]
     return {'status': 'DB_PATH_MISMATCH' if mismatch else 'OK', 'expected': expected,
             'seen': seen, 'mismatch': mismatch}
+
+
+def _describe_size(result):
+    """L7: size of the manual part of dom_describe, in JSON chars.
+
+    The same database path is echoed by directory, db_path, db.realpath,
+    health.expected and health.seen/mismatch; a deeper project directory must
+    not turn this guard into a crash on the first call of a session, so every
+    distinct path counts once (as '<db>') and the budget stays about the manual.
+    """
+    raw = json.dumps(result, ensure_ascii=False)
+    paths = {result['directory'], result['db_path']}
+    paths.update(result['health'].get('seen') or ())
+    paths.update(result['health'].get('mismatch') or ())
+    for path in sorted(paths, key=len, reverse=True):
+        raw = raw.replace(json.dumps(path, ensure_ascii=False)[1:-1], '<db>')
+    return len(raw)
 
 
 def describe(svc):
@@ -1868,8 +1910,7 @@ def describe(svc):
         profile = 'lite'
         summary = ('Lite (local_single_owner) profile of a SIMULATED DOM server: the local SQLite database is real and append-only, '
                    'OMH/Git targets are simulated. One owner writes; every admitted claim is labelled review_level=self.')
-        tools = [{'name': n, 'summary': TOOL_DOCS[n]['summary'], 'arguments': TOOL_DOCS[n]['arguments'],
-                  'returns': TOOL_DOCS[n]['returns'], 'example': {'tool': n, 'arguments': TOOL_DOCS[n]['example']}} for n in TOOL_DOCS]
+        tools = tool_index()
     else:
         profile = 'strict'
         summary = 'Strict profile.'
@@ -1892,7 +1933,7 @@ def describe(svc):
                   [{'tool': 'dom_find', 'arguments': {}, 'why': 'see the latest claims'},
                    {'tool': 'dom_claim', 'arguments': {'branch': branches[0] if branches else 'main', 'type': 'text', 'text': '<statement>'}, 'why': 'add a claim'}])
     health = _db_health(svc)
-    return {
+    result = {
         'status': 'DESCRIBED', 'profile': profile, 'simulated': svc.context.simulation, 'state': state, 'summary': summary,
         'directory': str(svc.store.path.parent),
         'db_path': os.path.realpath(str(svc.store.path)),
@@ -1908,6 +1949,7 @@ def describe(svc):
                                       'manual': 'every write waits as a candidate for dom_accept',
                                       'independent': 'a different principal (DOM_PRINCIPAL) must review and admit'}[svc.review_mode]},
         'work_ref': work, 'branches': branches, 'tools': tools, 'claim_types': claim_type_examples() if svc.lite else {},
+        'tool_docs': 'Full arguments, returns and example for one name: dom_help({"tool": "<name>"}).',
         'cycle': cycle,
         'review_level': {
             'self': 'admitted by the same local owner who wrote it (lite profile). Honest label: nobody independent has looked at it.',
@@ -1927,3 +1969,8 @@ def describe(svc):
             'Branch codes are [A-Za-z0-9_-]{1,32}; declare them with dom_start.'],
         'next_steps': next_steps,
     }
+    size = _describe_size(result)
+    assert size < DESCRIBE_MAX_CHARS, (
+        'L7: dom_describe must stay an index, not the manual: %d chars >= %d' % (size, DESCRIBE_MAX_CHARS))
+    return result
+

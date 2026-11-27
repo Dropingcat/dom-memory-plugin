@@ -215,7 +215,7 @@ LITE_SIGNATURE = {
     'dom_distillate': ({'action': str}, {'source': str, 'distillate': str, 'text': str, 'anchors': list, 'by': str, 'note': str}),
     # Read-only skill router: the handler never touches the ledger, so no identity,
     # branch or review argument exists here.
-    'dom_skill_select': ({'step': dict}, {'queue': list, 'plan_version': int, 'index_digest': str}),
+    'dom_skill_select': ({}, {'step': dict, 'queue': list, 'plan_version': int, 'index_digest': str}),
     # Read-only usage help.  ``tool`` is optional at the transport on purpose (like
     # dom_start's ``request``): a missing name must be refused by the handler with a
     # hint and help text, which a transport-level INVALID_ARGUMENTS cannot carry.
@@ -367,11 +367,46 @@ def _handle_distillate(service, args):
 
 def _handle_skill_select(service, args):
     # Read-only: the service (ledger, identity, review policy) is not consulted.
-    return skill_select_mod.select_step(
-        args['step'],
+    return handle_dom_skill_select(
+        args.get('step'),
         queue=args.get('queue') or [],
         plan_version=args.get('plan_version', 0),
         index_digest=args.get('index_digest', ''),
+    )
+
+
+# BUG-4 (STEP-BOUNDS): the pipeline is deterministic but not free, and an unbounded
+# step title made the answer ~55 KB.  The bounds are refused here, before the
+# pipeline runs, with a Russian help line — the same contract as dom_help.
+SKILL_SELECT_MAX_TITLE = 500
+SKILL_SELECT_MAX_CONTEXT = 2000
+
+
+@guarded
+def handle_dom_skill_select(step, queue=None, plan_version=0, index_digest=''):
+    """Read-only skill router; a step outside the BUG-4 bounds is an INVALID_FIELD."""
+    if type(step) is not dict:
+        raise Denied('INVALID_ARGUMENTS', field='step', hint='step is missing or not an object',
+                     help=('Тебе НУЖНО: 1) Передать step — объект с title, например '
+                           '{"title": "Add the sqlite migration"}. 2) Повторить вызов.'))
+    title = str(step.get('title', '') or '')
+    if len(title) > SKILL_SELECT_MAX_TITLE:
+        raise Denied('INVALID_FIELD', field='step.title',
+                     hint='title exceeds %d chars' % SKILL_SELECT_MAX_TITLE,
+                     help=('Тебе НУЖНО: 1) Сократить title до %d символов — это метка шага, '
+                           'а не тело плана. 2) Повторить вызов.' % SKILL_SELECT_MAX_TITLE))
+    context = str(step.get('context', '') or '')
+    if len(context) > SKILL_SELECT_MAX_CONTEXT:
+        raise Denied('INVALID_FIELD', field='step.context',
+                     hint='context exceeds %d chars' % SKILL_SELECT_MAX_CONTEXT,
+                     help=('Тебе НУЖНО: 1) Сократить context до %d символов — он дистиллируется, '
+                           'полный текст шага не нужен. 2) Повторить вызов.'
+                           % SKILL_SELECT_MAX_CONTEXT))
+    return skill_select_mod.select_step(
+        step,
+        queue=queue or [],
+        plan_version=plan_version,
+        index_digest=index_digest,
     )
 
 
@@ -380,9 +415,9 @@ def handle_dom_help(tool):
     """Usage help for one DOM tool, straight from HELP_DATA (read-only: the ledger,
     identity and review policy are never consulted)."""
     if type(tool) is not str or not tool.strip():
-        raise Denied('INVALID_ARGUMENTS', field='tool', hint='tool is required',
+        raise Denied('INVALID_ARGUMENTS', field='tool', hint='tool is missing or empty',
                      help=('Тебе НУЖНО: 1) Выбрать инструмент из списка: dom_claim, dom_find, dom_update, ... '
-                           '2) Передать его название в tool.'))
+                           '2) Передать его название в tool — без него dom_help не может ответить.'))
     data = HELP_DATA.get(tool)
     if not data:
         raise Denied('INVALID_FIELD', field='tool', hint="Unknown tool '%s'" % tool,

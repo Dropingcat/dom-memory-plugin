@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace as _replace
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +45,14 @@ MAX_PREFETCH = 3                 # the window is current + up to three follow-up
 FALLBACK_SKILL = 'skill_search'
 NO_SIGNAL_GAP = 'no-signal'
 STATUS = 'SKILLS_SELECTED'
+
+# BUG-4 (STEP-BOUNDS): a micro-step is a label, not a plan body.  Without these
+# bounds one oversized title produced a ~55 KB answer, so the pipeline clips the
+# step before any stage sees it.  CONTEXT_LIMIT in step_registry.py is stricter
+# (600 chars); its limit wins, and MAX_CONTEXT is the pipeline's own ceiling.
+MAX_TITLE = 500
+MAX_CONTEXT = 2000
+MAX_GAPS = 20                    # gaps point at skill_search; they are not a skill dump
 
 # The index is derived data and expensive to collect (one walk of every skill root),
 # so it is cached for the life of the process.  The key is the root tuple, so two
@@ -127,6 +136,15 @@ def index_digest_for(skills) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _bounded_step(step):
+    """Clip an already-built MicroStep to the BUG-4 budgets (frozen dataclass -> replace)."""
+    title = str(step.title or '')[:MAX_TITLE]
+    context = str(step.context or '')[:MAX_CONTEXT]
+    if title == step.title and context == step.context:
+        return step
+    return _replace(step, title=title, context=context)
+
+
 def micro_step(step, plan_version: int = 0):
     """Normalize a plain dict (or return an existing MicroStep) without inventing fields.
 
@@ -135,12 +153,13 @@ def micro_step(step, plan_version: int = 0):
     signals, and the derived action markers are added as ``action:*``.
     """
     if isinstance(step, _steps.MicroStep):
+        step = _bounded_step(step)
         return step
     if not isinstance(step, dict):
         raise TypeError('step must be a MicroStep or a dict, got %r' % (type(step).__name__,))
 
-    title = str(step.get('title') or '')
-    context = str(step.get('context') or '')[:_steps.CONTEXT_LIMIT]
+    title = str(step.get('title') or '')[:MAX_TITLE]
+    context = str(step.get('context') or '')[:_steps.CONTEXT_LIMIT][:MAX_CONTEXT]
     cap = _tuple(step.get('cap') if step.get('cap') is not None else step.get('capabilities'))
     claims = _tuple(step.get('claims'))
     markers = _tuple(step.get('markers'))
@@ -224,6 +243,10 @@ def select_step(step, queue=None, plan_version: int = 0, index_digest: str = '',
 
     kept = set(queue_ids) | set(advisory)
     gaps = sorted({_skill_id(skill) for skill in skill_list} - kept)
+    # BUG-4: never return the whole skill index as a gap dump.  The tail is a
+    # pointer, so the caller still sees that the list was cut and can search.
+    if len(gaps) > MAX_GAPS:
+        gaps = gaps[:MAX_GAPS] + ['... and %d more' % (len(gaps) - MAX_GAPS)]
 
     by_id = {}
     for skill in skill_list:
@@ -301,7 +324,10 @@ select_pipeline = select_step
 __all__ = [
     'CARDS_PATH',
     'FALLBACK_SKILL',
+    'MAX_CONTEXT',
+    'MAX_GAPS',
     'MAX_PREFETCH',
+    'MAX_TITLE',
     'NO_SIGNAL_GAP',
     'STATUS',
     'collect_skills',

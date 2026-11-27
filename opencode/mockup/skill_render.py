@@ -126,12 +126,16 @@ def render_future(step) -> str:
     return _clip('step: %s' % _title(step), BUDGET_FUTURE)
 
 
-def render_gaps(gaps: list[str]) -> str:
+def render_gaps(gaps: list[str], step_cap: Optional[list[str]] = None) -> str:
     """Render missing capabilities: ``gap: CAP -> skill_search`` (<= BUDGET_GAPS).
 
     An empty list is not an empty string: the block always carries an explicit
     ``gaps: none`` so the section cannot be mistaken for a truncated one.
+    When step_cap is empty (no capabilities declared), renders
+    ``gaps: not-declared`` instead of ``gaps: none`` (false green guard).
     """
+    if step_cap is not None and not step_cap:
+        return 'gaps: not-declared (step has no capability declaration)'
     names = [str(gap).strip() for gap in (gaps or ()) if str(gap).strip()]
     if not names:
         return 'gaps: none'
@@ -209,6 +213,7 @@ def render_block(
     future_steps: list['MicroStep'],
     gaps: list[str],
     fingerprint: str,
+    step_cap: Optional[list[str]] = None,
 ) -> QueueBlock:
     """Full block render with positional gradation.
 
@@ -228,7 +233,7 @@ def render_block(
     """
     head = render_current(current_step, current_analysis).split('\n')
     middle = _render_middle(next_steps, then_steps, future_steps)
-    tail = [render_gaps(gaps)]
+    tail = [render_gaps(gaps, step_cap)]
 
     def joined(parts: list[str]) -> int:
         return len('\n'.join(parts))
