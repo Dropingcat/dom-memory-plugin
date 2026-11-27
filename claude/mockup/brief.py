@@ -7,6 +7,8 @@ vector and a short checklist.  It never invents a relationship.
 """
 from __future__ import annotations
 
+import json
+
 from . import planning, promptizer
 from .admission import verify_chain
 
@@ -32,6 +34,31 @@ def _line(task, header, props):
         task.get('path'), _short(task.get('title'), 90), task.get('branch') or '?', task.get('status') or '?',
         _short(baseline, 300), (header or '?')[:8],
     )
+
+
+def _capabilities(props):
+    """Capabilities declared by the header's ``accept`` property, never guessed.
+
+    ``dom_annotate`` stores a property value as text, so a JSON-encoded list is
+    decoded first; an absent, malformed or unmapped ``accept`` yields no CAP
+    line, so the producer receives ``cap: []`` instead of an invented envelope.
+    """
+    accept = props.get('accept')
+    if isinstance(accept, str):
+        try:
+            accept = json.loads(accept)
+        except ValueError:
+            return []
+    if isinstance(accept, dict):
+        accept = [accept]
+    if not isinstance(accept, list) or not accept:
+        return []
+    try:
+        from .skill_router import capabilities_from_accept
+        caps, _unmapped = capabilities_from_accept(accept)
+        return list(caps)
+    except (ImportError, TypeError, ValueError):
+        return []
 
 
 def _source(resolved, default='not recorded'):
@@ -129,10 +156,12 @@ def project_brief(svc, max_chars=MAX_CHARS):
                 anchors.append(header)
             lines.append('  ' + _line(task, header, props))
         header, props = _header(c, current)
-        lines.append('CURRENT%s: %s "%s" [%s %s] anchor %s' % (
+        caps = _capabilities(props)
+        cap_line = ' CAP: %s' % ','.join(caps) if caps else ''
+        lines.append('CURRENT%s: %s "%s" [%s %s] anchor %s%s' % (
             '' if explicit_active else ' (auto)',
             current['path'], _short(current.get('title'), 100), current.get('branch') or '?',
-            current.get('status') or '?', (header or '?')[:8],
+            current.get('status') or '?', (header or '?')[:8], cap_line,
         ))
         lines.append('ACTIVE: %s' % (
             'pinned by current_task=%s' % explicit if explicit_active

@@ -11,6 +11,7 @@ stdout carries MCP JSON-RPC frames only; diagnostics go to stderr / ``--log-file
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import anyio
@@ -23,6 +24,7 @@ from .admission import Denied, Service, guarded
 from . import claim_entry as claim_entry_mod
 from . import public_dto
 from . import skill_select as skill_select_mod
+from . import tracker
 # Usage help for every tool (contract 4.3).  The launcher and the check scripts
 # put the plugin root on sys.path; a host tree synced without HELP_DATA.py still
 # starts, and dom_help then reports that no tool is known (never an ImportError).
@@ -557,6 +559,35 @@ def dispatch(service, name, arguments):
     return handler(service, args)
 
 
+def _elapsed_ms(started):
+    return int((time.monotonic() - started) * 1000)
+
+
+def _track_refusal(name, public, session_id, duration_ms):
+    """One observation per refusal the caller actually saw. Never raises, never decides."""
+    try:
+        status = public.get('status') if isinstance(public, dict) else None
+        if status not in public_dto.KNOWN_REFUSALS:
+            return
+        tracker.record(tracker.ToolError(
+            tool=name, status=status, hint=public.get('hint', ''),
+            help=public.get('help', ''), session_id=session_id,
+            duration_ms=duration_ms, field=public.get('field', ''),
+            next_action=public.get('next_action', '')))
+    except Exception:  # noqa: BLE001 - telemetry must never change the answer
+        pass
+
+
+def _track_failure(name, status, hint, help_text, session_id, duration_ms, error_type=''):
+    """Transport/projection fault: a refusal that never became a projected refusal."""
+    try:
+        tracker.record(tracker.ToolError(
+            tool=name, status=status, hint=hint, help=help_text,
+            session_id=session_id, duration_ms=duration_ms, error_type=error_type))
+    except Exception:  # noqa: BLE001 - telemetry must never change the answer
+        pass
+
+
 def build_server(service, log_path=None):
     server = Server('omh-dom-mockup', version='0.1.0')
 
@@ -573,6 +604,8 @@ def build_server(service, log_path=None):
 
     @server.call_tool(validate_input=False)
     async def call_tool(name, arguments):
+        started = time.monotonic()
+        session_id = getattr(service, 'session', '') or ''
         try:
             result = dispatch(service, name, arguments)
             public = public_dto.project_tool(name, result, scope=service.context.branches, profile=service.profile)
@@ -590,6 +623,7 @@ def build_server(service, log_path=None):
                        'hint': hint,
                        'help': meta.get('help', '')}
             log({'tool': name, 'status': code, 'principal': service.context.principal})
+            _track_failure(name, code, hint, meta.get('help', ''), session_id, _elapsed_ms(started))
             return types.CallToolResult(
                 content=[types.TextContent(type='text', text=json.dumps(payload, ensure_ascii=True, sort_keys=True))],
                 structuredContent=payload, isError=True)
@@ -606,11 +640,14 @@ def build_server(service, log_path=None):
                        'help': meta.get('help', '')}
             log({'tool': name, 'status': code, 'principal': service.context.principal,
                  'error_type': type(error).__name__})
+            _track_failure(name, code, meta.get('hint', ''), meta.get('help', ''), session_id,
+                           _elapsed_ms(started), error_type=type(error).__name__)
             return types.CallToolResult(
                 content=[types.TextContent(type='text', text=json.dumps(payload, ensure_ascii=True, sort_keys=True))],
                 structuredContent=payload, isError=True)
         record = {'tool': name, 'status': public.get('status'), 'simulated': service.context.simulation,
                   'principal': service.context.principal}
+        _track_refusal(name, public, session_id, _elapsed_ms(started))
         log(record)
         return types.CallToolResult(
             content=[types.TextContent(type='text', text=json.dumps(public, ensure_ascii=True, sort_keys=True))],

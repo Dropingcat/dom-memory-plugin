@@ -1,6 +1,7 @@
 """Check the offline skill index and the BM25 category proposer on synthetic catalogs."""
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tempfile
@@ -40,6 +41,72 @@ def by_id(skills, skill_id):
         if record.skill_id == skill_id:
             return record
     raise AssertionError("missing record %r in %s" % (skill_id, [row.skill_id for row in skills]))
+
+
+def test_card_merge_into_disk_skill():
+    """Disk skill with a matching card gets verified_provides merged (not card-only)."""
+    index = si.SkillIndex()
+    skills = index.collect()  # real collect with cards (default -> skills.card.json)
+    admet = by_id(skills, "admet-prediction")
+    assert admet.card_only is False, "admet-prediction has a SKILL.md, so it must not be card-only"
+    assert "toxicity" in admet.verified_provides, (
+        "admet-prediction card has provides=['chemistry','toxicity']; "
+        "disk skill must get verified_provides from card"
+    )
+    assert "chemistry" in admet.verified_provides, (
+        "chemistry should also be merged"
+    )
+    assert admet.verified_provides == ("chemistry", "toxicity"), admet.verified_provides
+
+
+def test_fingerprint_tracks_cards():
+    """A card edit must move the cache fingerprint and the tau-gate index digest."""
+    from mockup import skill_select as ss
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        root = tmp / "skills"
+        cards = tmp / "skills.card.json"
+        write_skill(root, "chemistry-skill", skill_text("chemistry-skill", "Chemistry work."))
+        write_skill(root, "plain-skill", skill_text("plain-skill", "No curated provides."))
+
+        def write_cards(provides, card_only_id=""):
+            payload = {"cards": [{"id": "chemistry-skill", "name": "chemistry-skill",
+                                  "evidence": "test card", "provides": provides}]}
+            if card_only_id:
+                payload["cards"].append({"id": card_only_id, "name": card_only_id,
+                                         "evidence": "test card", "provides": ["virtual"]})
+            cards.write_text(json.dumps(payload), encoding="utf-8")
+
+        index = si.SkillIndex()
+
+        write_cards(["chemistry"])
+        before = index.collect([root], cards_path=cards)
+        fingerprint_before = si.fingerprint_for(before)
+        index_digest_before = ss.index_digest_for(before)
+
+        # verified_provides changes while every SKILL.md stat stays the same.
+        write_cards(["chemistry", "toxicity"])
+        after = index.collect([root], cards_path=cards)
+        assert si.fingerprint_for(after) != fingerprint_before, (
+            "changing verified_provides must change fingerprint_for"
+        )
+        assert ss.index_digest_for(after) != index_digest_before, (
+            "changing verified_provides must change the producer's indexDigest"
+        )
+
+        # card_only is itself part of both hashes.
+        write_cards(["chemistry", "toxicity"], card_only_id="virtual-skill")
+        with_virtual = index.collect([root], cards_path=cards)
+        assert by_id(with_virtual, "virtual-skill").card_only is True
+        assert si.fingerprint_for(with_virtual) != si.fingerprint_for(after), (
+            "a card-only skill must change fingerprint_for"
+        )
+        assert ss.index_digest_for(with_virtual) != ss.index_digest_for(after), (
+            "a card-only skill must change the producer's indexDigest"
+        )
+        assert si.fingerprint_for(with_virtual) == si.fingerprint_for(
+            index.collect([root], cards_path=cards)), "fingerprint stays deterministic"
 
 
 def main() -> int:
@@ -190,7 +257,14 @@ def main() -> int:
         broken.write_text("{broken", encoding="utf-8")
         assert index.load_cache("f" * 64) is None, "a corrupt cache is a miss"
 
-    print("PASS skill_index: records, parsing, mentions, precedence, BM25 proposer, cache")
+    # 9. Cards merge their curated provides into matching disk records, not only card-only.
+    test_card_merge_into_disk_skill()
+
+    # 10. A card edit moves the fingerprint and the producer's indexDigest.
+    test_fingerprint_tracks_cards()
+
+    print("PASS skill_index: records, parsing, mentions, precedence, BM25 proposer, cache, "
+          "card merge, card fingerprint")
     return 0
 
 

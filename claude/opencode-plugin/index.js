@@ -168,12 +168,14 @@ export function discussionFromMessages(messages) {
 }
 
 /* The plan brief's CURRENT line is the active micro-step (sigma):
-     CURRENT: П15 "card — verified card has this skill" [ER pending] anchor 1a2b3c4d
+     CURRENT: П15 "card — verified card has this skill" [ER pending] anchor 1a2b3c4d CAP: sqlite,migration
      CURRENT (auto): П1 "Timeout: 100 ms" [pending blocked] anchor ?
    The line number is the step id (the plan path), the quoted text the title, the
-   plan revision the invalidation key.  CURRENT MEANING/WHY/NOW are the step's own
-   recorded context, so they are passed along (bounded like README's sigma context).
-   Returns null when the brief carries no plan: no step -> no skill queue. */
+   plan revision the invalidation key; a trailing CAP: list (from the header's
+   declared `accept`) is the step's capability envelope.  CURRENT MEANING/WHY/NOW
+   are the step's own recorded context, so they are passed along (bounded like
+   README's sigma context).  Returns null when the brief carries no plan: no
+   step -> no skill queue. */
 export function stepFromBrief(note) {
   const text = typeof note === "string" ? note : ""
   if (!text) return null
@@ -186,6 +188,13 @@ export function stepFromBrief(note) {
   const title = match[2].trim()
   if (!stepId || !title) return null
   const step = { step_id: stepId, title, cap: [] }
+  const capMatch = /\bCAP:\s*([\w,-]+)\s*$/i.exec(body)
+  if (capMatch) {
+    step.cap = capMatch[1]
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  }
   const context = []
   for (const key of ["CURRENT MEANING", "WHY", "NOW"]) {
     const row = text.split("\n").find((item) => item.trim().startsWith(`${key}:`))

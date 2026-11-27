@@ -129,9 +129,22 @@ def load_cards(path=None) -> list[dict]:
 
 
 def index_digest_for(skills) -> str:
-    """Canonical sha256 of the skill index: id + declared content digest, order-free."""
-    rows = sorted([_skill_id(skill), str(_field(skill, 'content_digest', '') or '')]
-                  for skill in skills or () if _skill_id(skill))
+    """Canonical sha256 of the skill index: identity + content digest + card data.
+
+    Card-only skills have no SKILL.md and therefore no ``content_digest``, so the
+    curated card fields (``verified_provides``, ``card_only``) are part of the row.
+    Without them, editing ``skills.card.json`` would leave ``indexDigest`` unchanged
+    and the tau-gate would keep serving a block built from the old cards.
+    """
+    rows = []
+    for skill in skills or ():
+        sid = _skill_id(skill)
+        if not sid:
+            continue
+        provides = sorted(_tuple(_field(skill, 'verified_provides', ())))
+        rows.append([sid, str(_field(skill, 'content_digest', '') or ''), provides,
+                     bool(_field(skill, 'card_only', False))])
+    rows.sort()
     encoded = json.dumps(rows, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     return hashlib.sha256(encoded).hexdigest()
 

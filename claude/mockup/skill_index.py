@@ -87,7 +87,6 @@ class SkillRecord:
     content_digest: str = ''           # sha256 of the raw file bytes
     verified_provides: tuple[str, ...] = ()  # curated card only (B5); never from text
     card_only: bool = False                  # True when this record was created from a card, not a SKILL.md file
-    card_only: bool = False                  # skill exists only in cards, not as SKILL.md
 
     def __post_init__(self):
         # A hand-built record must obey the same tuple invariants as a parsed one.
@@ -339,7 +338,12 @@ def records_from_cache(cache: Optional[dict]) -> list[SkillRecord]:
 
 
 def fingerprint_for(skills, capability_version: Optional[int] = None) -> str:
-    """sha256 over skill identity + path + mtime + size + capability version."""
+    """sha256 over skill identity + path + mtime + size + curated card data.
+
+    ``verified_provides`` and ``card_only`` come from ``skills.card.json``, not from
+    the SKILL.md file, so a card edit must move the fingerprint even though every
+    file stat stays the same.
+    """
     version = CAPABILITY_VERSION if capability_version is None else int(capability_version)
     parts = ['capability_version=%d' % version]
     for record in sorted(skills, key=lambda row: row.skill_id):
@@ -349,6 +353,14 @@ def fingerprint_for(skills, capability_version: Optional[int] = None) -> str:
         except OSError:
             mtime, size = 0, 0
         parts.append('%s|%s|%d|%d' % (record.skill_id, record.source_path, mtime, size))
+        card_sig = ''
+        vp = sorted(record.verified_provides)
+        if vp:
+            card_sig = '+' + ','.join(vp)
+        if record.card_only:
+            card_sig += '+card_only'
+        if card_sig:
+            parts[-1] += card_sig
     return hashlib.sha256('\n'.join(parts).encode('utf-8')).hexdigest()
 
 
@@ -399,6 +411,21 @@ class SkillIndex:
                             verified_provides=tuple(str(p).strip() for p in card.get('provides', []) if p),
                             card_only=True,
                         )
+                    # 2b. Merge verified_provides into ALL matching records (disk + card-only).
+                    # A card is the curated evidence, so its provides apply to the real skill
+                    # record too, not only to a card-only placeholder.
+                    for card in cards_data.get('cards', []):
+                        cid = str(card.get('id', '')).strip()
+                        if not cid or cid not in collected:
+                            continue
+                        card_provides = tuple(str(p).strip() for p in card.get('provides', []) if p)
+                        if not card_provides:
+                            continue
+                        record = collected[cid]
+                        existing = set(record.verified_provides)
+                        merged = tuple(sorted(existing | set(card_provides)))
+                        if merged != record.verified_provides:
+                            object.__setattr__(record, 'verified_provides', merged)
             except (OSError, ValueError, TypeError):
                 pass  # no cards file = no card-only skills; that is fine
         return sorted(collected.values(), key=lambda row: row.skill_id)
