@@ -351,7 +351,7 @@ B. [Приложение B. Статусы, которые не являются
 | FORK_NOT_ALLOWED | mode=fork над собственной текущей версией | обновить свою версию mode=update или оставить как есть |
 | ROOT_IMMUTABLE | попытка заменить корневой request заказчика | добавить уточняющий claim с basis=[root claim_id]; goal можно уточнить отдельно |
 | NO_CHANGE | новый text и anatomy совпадают с текущими | изменить text или anatomy, либо не вызывать update |
-| INVALID_FIELD | неверный mode/expected_current/reason/anatomy | mode: auto|update|fork; reason непустой; anatomy: {basis?, refines?, purpose?, usage?, keywords?} |
+| INVALID_FIELD | неверный mode/expected_current/reason/anatomy | mode: auto\|update\|fork; reason непустой; anatomy: {basis?, refines?, purpose?, usage?, keywords?} |
 | GATE_NO_READ | обновляемый claim не прочитан этой сессией | прочитать его через dom_context и повторить |
 
 **Также возможны:** `EMPTY_TEXT`, `INVALID_TEXT`, `IDEMPOTENCY_MISMATCH`, `UPDATE_INCOMPLETE`, `PROFILE_STRICT` — коды есть в коде, но не в `common_errors` этого инструмента; причина и решение в §2.
@@ -463,7 +463,7 @@ B. [Приложение B. Статусы, которые не являются
 |---|---|---|
 | PLAN_CONFLICT | план изменился после твоего base_revision | прочитать dom_plan_tree, слить изменения и повторить с base_revision=current_revision; force=true — осознанно |
 | PLAN_EMPTY | в plan не найдено ни одного пункта | передать нумерованные пункты (1., 1.1), bullets/заголовки или JSON [{"title": ...}] |
-| INVALID_FIELD | неверный plan/format/source/contexts/mode/base_revision/force | format: auto|markdown|json; mode: full|partial; contexts: {путь: непустой текст} |
+| INVALID_FIELD | неверный plan/format/source/contexts/mode/base_revision/force | format: auto\|markdown\|json; mode: full\|partial; contexts: {путь: непустой текст} |
 | PROFILE_STRICT | вызов в strict-профиле | использовать lite-профиль продукта |
 | NOT_INITIALIZED | база не создана | сначала dom_start с запросом заказчика |
 
@@ -595,7 +595,7 @@ Claims пункта плана по ролям (defines/justifies/implements/...
 |---|---|---|
 | TASK_NOT_FOUND | task не найден среди пунктов плана | взять существующий пункт из dom_plan_tree |
 | TEXT_TOO_LARGE | материал больше лимита извлечения | разбить материал на части и вызвать dom_extract для каждой |
-| INVALID_FIELD | provider вне deterministic|anthropic|command|client или пустой текст | убрать provider (возьмётся из конфигурации) или выбрать допустимый |
+| INVALID_FIELD | provider вне deterministic\|anthropic\|command\|client или пустой текст | убрать provider (возьмётся из конфигурации) или выбрать допустимый |
 | PROFILE_STRICT | вызов в strict-профиле | использовать lite-профиль продукта |
 
 **Также возможны:** `EMPTY_TEXT`, `INVALID_TEXT` — коды есть в коде, но не в `common_errors` этого инструмента; причина и решение в §2.
@@ -653,7 +653,7 @@ Claims пункта плана по ролям (defines/justifies/implements/...
 |---|---|---|
 | NO_SUCH_CANDIDATE | candidate_id не существует или вне scope | взять id из dom_extract или pending в dom_resume |
 | CANDIDATE_CLOSED | кандидат уже admitted/rejected/superseded | прочитать состояние через dom_candidate и не решать повторно |
-| INVALID_FIELD | decision не approve/reject или reject без note | decision: approve|reject; для reject передать непустой note |
+| INVALID_FIELD | decision не approve/reject или reject без note | decision: approve\|reject; для reject передать непустой note |
 | REVISION_CONFLICT | ветка ушла вперёд, а политика independent запрещает rebase | отклонить кандидата с note и пересдать материал автором |
 | INDEPENDENCE_NOT_ENFORCED | нет capability review или отключена симуляция | запустить сервер с нужной ролью/политикой; см. dom_describe.review_level |
 
@@ -846,7 +846,7 @@ strict: записать review кандидата по его digest.
 |---|---|---|
 | DIGEST_MISMATCH | intent_digest не совпадает с сохранённым кандидатом | скопировать intent_digest без изменений из dom_candidate/dom_submit |
 | NO_SUCH_CANDIDATE | candidate_id не найден или вне scope | взять id из dom_resume.pending или dom_extract |
-| INVALID_FIELD | decision не approve/reject, reject без note или note длиннее 4000 | decision: approve|reject; для reject — непустой note до 4000 символов |
+| INVALID_FIELD | decision не approve/reject, reject без note или note длиннее 4000 | decision: approve\|reject; для reject — непустой note до 4000 символов |
 | INDEPENDENCE_NOT_ENFORCED | нет capability review или под independent ревьюится свой кандидат | ревьюить должен другой principal; см. dom_describe.review_level |
 
 ### 3.24. `dom_candidate`
