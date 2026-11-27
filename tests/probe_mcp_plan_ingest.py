@@ -14,8 +14,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+except ImportError:
+    print("SKIP probe_mcp_plan_ingest: mcp module not available")
+    raise SystemExit(0)
 
 SERVER = Path(__file__).resolve().parents[1] / "opencode" / "scripts" / "dom_server.py"
 PY = sys.executable

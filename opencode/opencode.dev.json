@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "dom-memory": {
+        "type": "local",
+        "command": [
+          "E:/opencode_harness_portable/.venv/Scripts/python.exe",
+          "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/opencode/scripts/dom_server.py"
+        ],
+        "environment": {
+          "OPENCODE_PROJECT_DIR": "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin"
+        },
+        "disabled": false
+      }
+    }
+  },
+  "plugins": [
+    {
+      "package": "file:///E:/opencode_harness_portable/projects/opencode-dom-memory-plugin/opencode",
+      "options": {
+        "pythonPath": "E:/opencode_harness_portable/.venv/Scripts/python.exe",
+        "projectDir": "E:/opencode_harness_portable/projects/opencode-dom-memory-plugin",
+        "autostart": true
+      }
+    }
+  ]
+}
