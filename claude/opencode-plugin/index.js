@@ -34,6 +34,7 @@
  *   checkEvery  DOM_CHECK_EVERY (plan-check period, default 10)
  *   autostart   start the project memory on the first task (default true); false = DOM_AUTOSTART=0
  *   timeoutMs   per hook-program timeout (default 60000)
+ *   skillTimeoutMs  ceiling for the skill queue producer inside a model request (default 4000)
  *   enabled     false turns both hooks off
  */
 import { spawnSync } from "node:child_process"
@@ -166,6 +167,38 @@ export function discussionFromMessages(messages) {
   return out
 }
 
+/* The plan brief's CURRENT line is the active micro-step (sigma):
+     CURRENT: П15 "card — verified card has this skill" [ER pending] anchor 1a2b3c4d
+     CURRENT (auto): П1 "Timeout: 100 ms" [pending blocked] anchor ?
+   The line number is the step id (the plan path), the quoted text the title, the
+   plan revision the invalidation key.  CURRENT MEANING/WHY/NOW are the step's own
+   recorded context, so they are passed along (bounded like README's sigma context).
+   Returns null when the brief carries no plan: no step -> no skill queue. */
+export function stepFromBrief(note) {
+  const text = typeof note === "string" ? note : ""
+  if (!text) return null
+  const line = text.split("\n").find((row) => /^\s*CURRENT(?: \(auto\))?:/i.test(row))
+  if (!line) return null
+  const body = line.replace(/^\s*CURRENT(?: \(auto\))?:\s*/i, "").trim()
+  const match = /^(\S+)\s+"(.*)"\s*\[/.exec(body) || /^(\S+)\s+"(.*)"/.exec(body)
+  if (!match) return null
+  const stepId = match[1].trim()
+  const title = match[2].trim()
+  if (!stepId || !title) return null
+  const step = { step_id: stepId, title, cap: [] }
+  const context = []
+  for (const key of ["CURRENT MEANING", "WHY", "NOW"]) {
+    const row = text.split("\n").find((item) => item.trim().startsWith(`${key}:`))
+    if (!row) continue
+    const value = row.slice(row.indexOf(":") + 1).trim()
+    if (value && !/^not recorded$/i.test(value) && value !== "?") context.push(value)
+  }
+  if (context.length) step.context = context.join(" ").slice(0, 600) // MicroStep CONTEXT_LIMIT
+  const version = /\[DOM MEMORY INDEX\][^\n]*?\bplan\s+r(\d+)/i.exec(text)
+  if (version) step.plan_version = Number(version[1])
+  return step
+}
+
 function noteOf(stdout) {
   if (!stdout) return ""
   try {
@@ -224,6 +257,16 @@ export async function register(ctx) {
   })
   console.error(`[dom-memory hooks] root=${root} project=${projectDir} planDir=${planDir}`)
 
+  const queueProducer = join(root, "scripts", "queue_producer.py")
+  const skillQueueEnabled = existsSync(queueProducer)
+  if (!skillQueueEnabled) {
+    console.error("[dom-memory hooks] queue_producer.py not found — skill queue disabled")
+  }
+  /* The producer walks the skill index (~0.25 s warm) inside a model request, so it
+     gets its own, shorter ceiling than the plan hooks; the result cache in the
+     producer is what keeps the common case cheap. */
+  const skillTimeoutMs = Number(options.skillTimeoutMs) > 0 ? Number(options.skillTimeoutMs) : 4000
+
   const pending = new Map()
   const planDigests = new Map() // sessionID -> sha256 of the last plan file this session consumed
   const briefs = new Map() // sessionID -> last DOM brief from the prompt hook, reused on tool continuations
@@ -236,11 +279,11 @@ export async function register(ctx) {
     pending.set(key, list)
   }
 
-  const run = (script, args, input, sessionID) => {
+  const run = (script, args, input, sessionID, limitMs = timeoutMs) => {
     const result = spawnSync(python, ["-B", script, ...args], {
       input,
       encoding: "utf8",
-      timeout: timeoutMs,
+      timeout: limitMs,
       cwd: projectDir,
       env: sessionID
         ? { ...env, DOM_SESSION: sessionID, DOM_SESSION_SOURCE: "hook", DOM_ORIGIN: "hook" }
@@ -337,6 +380,76 @@ export async function register(ctx) {
     else if (typeof entry?.set === "function") entry.set("dom.skill-queue", block.text)
     else queue(sessionID, block.text)
     console.log(`[τ-gate] emit fp=${fingerprint.slice(0, 12)}`)
+  }
+
+  /* Skill queue producer: the context hook turns the active step of the plan brief
+     into a queue block by running the Python pipeline.  This is the native producer
+     the tau-gate above was built for: the producer returns the normalised sigma
+     (cap_set, derived category hint, markers, plan version, index digest), the gate
+     hashes exactly that, and only a new fingerprint reaches the instruction entry.
+     Advisory throughout: a missing index, a crash or a timeout is logged and the
+     model request goes on without a block. */
+  const skillQueueFor = (sessionID, event) => {
+    if (!sessionID || !skillQueueEnabled) return null
+    const note = briefs.get(sessionID)
+    const step = stepFromBrief(note)
+    if (!step) return null // no plan -> no step -> no queue
+    const args = ["--step", JSON.stringify(step)]
+    if (domDir) args.push("--directory", domDir)
+    const result = run(queueProducer, args, "", sessionID, skillTimeoutMs)
+    if (result.error) {
+      console.warn(`[dom-memory] skill-producer: ${result.error.message}`)
+      return { status: "error", error: result.error.message }
+    }
+    let data
+    try {
+      data = JSON.parse(result.stdout)
+    } catch {
+      const detail = result.stderr ? `: ${result.stderr.trim().slice(0, 200)}` : ""
+      console.warn(`[dom-memory] skill-producer: unparsable output${detail}`)
+      return { status: "error", error: "unparsable output" }
+    }
+    if (data?.status !== "OK" || typeof data.block_text !== "string" || !data.block_text.trim()) {
+      const message = data?.error || "empty result"
+      console.warn(`[dom-memory] skill-producer: ${message}`)
+      return { status: "error", error: message }
+    }
+    const state = data.state && typeof data.state === "object" ? data.state : step
+    const fingerprint = computeFingerprint(state)
+    if (data.fingerprint && data.fingerprint !== fingerprint) {
+      // Same sigma, two processes: a mismatch is a pipeline bug, not a reason to block.
+      console.warn(
+        `[dom-memory] skill-producer: fingerprint drift py=${String(data.fingerprint).slice(0, 12)} ` +
+          `js=${fingerprint.slice(0, 12)}`,
+      )
+    }
+    const queueList = Array.isArray(data.queue) ? data.queue.map((id) => String(id)) : []
+    const top = queueList[0] || "skill_search"
+    const { shouldReemit, idleCount } = checkReemit(sessionID, fingerprint)
+    if (!shouldReemit) {
+      console.log(`[τ-gate] skill-queue idle (${idleCount}), block not re-emitted`)
+      return { status: "idle", skill_id: top, idle: idleCount, fingerprint }
+    }
+    const text = data.block_text.trim()
+    /* Entry transport first (the host announces it at the next step boundary); the
+       request under assembly is the native fallback, the deferred queue the last. */
+    const entry = ctx.session?.instructions?.entry
+    if (typeof entry?.put === "function") entry.put("dom.skill-queue", text)
+    else if (typeof entry?.set === "function") entry.set("dom.skill-queue", text)
+    else if (Array.isArray(event?.system)) event.system.push({ type: "text", text })
+    else queue(sessionID, text)
+    console.log(
+      `[dom-memory] skill-queue injected: ${top} (${text.length} chars, idle ${idleCount}, ` +
+        `fp ${fingerprint.slice(0, 12)})`,
+    )
+    return {
+      status: "injected",
+      skill_id: top,
+      queue: queueList,
+      gaps: Array.isArray(data.gaps) ? data.gaps.map((gap) => String(gap)) : [],
+      confidence_bp: Number(data.confidence_bp) || 0,
+      fingerprint,
+    }
   }
 
   const executeBefore = async (event, output) => {
@@ -459,6 +572,15 @@ export async function register(ctx) {
         error = caught instanceof Error ? caught.message : String(caught)
         console.error("[dom-memory hooks] context:", caught)
       }
+      /* Skill queue producer: run after the plan is ingested (its note joins the
+         notes) and before the snapshot, so the injected block is attributable to
+         this request.  Advisory: failures are recorded, never thrown. */
+      let skillQueue = null
+      try {
+        skillQueue = skillQueueFor(sessionID, event)
+      } catch (caught) {
+        console.error("[dom-memory hooks] skill-queue:", caught)
+      }
       const injectedText = notes.join("\n\n")
       if (notes.length) {
         if (!Array.isArray(event.system)) event.system = []
@@ -475,6 +597,15 @@ export async function register(ctx) {
         extracted: { queued: queuedCount },
         injected: notes.length
           ? { notes: notes.length, chars: injectedText.length, sha256: sha256(injectedText), preview: preview(injectedText) }
+          : null,
+        skill_queue: skillQueue
+          ? {
+              status: skillQueue.status,
+              skill_id: skillQueue.skill_id ?? null,
+              idle: skillQueue.idle ?? 0,
+              fingerprint: skillQueue.fingerprint ? skillQueue.fingerprint.slice(0, 16) : null,
+              error: skillQueue.error ?? null,
+            }
           : null,
         snapshot: snapshot ? { id: snapshot.id, sha256_full: snapshot.sha256_full, truncated: snapshot.truncated, path: snapshot.path } : null,
         context: {
