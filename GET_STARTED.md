@@ -24,8 +24,7 @@ Prerequisites (both hosts):
 Do one of the following:
 
 * **Ready archive:** download `dom-memory.plugin` from
-  [release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)
-  (170 404 B; SHA256 `927bd8914e2888d8bcddb751f75fd824a76e47c391c04b4447c84073cc67c6ba`).
+  [release v0.3.1](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.3.1).
 * **From the tree:** copy the `claude/` folder somewhere on your machine, e.g.
   `C:\tools\dom-memory-plugin\claude`.
 
@@ -71,9 +70,8 @@ answers `READY`.
 
 Do one of the following:
 
-* **Ready archive:** download `opencode-dom-memory-0.2.6.zip` from
-  [release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)
-  (179 665 B; SHA256 `75097314546c175e95a07041d4966d360359ee92d71b1cb637b908349ab9a56b`),
+* **Ready archive:** download `opencode-dom-memory-0.3.1.zip` from
+  [release v0.3.1](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.3.1),
   unzip it anywhere (e.g. `C:\tools\opencode-dom-memory`).
 * **From the tree:** the `opencode/` folder *is* the plugin package — you can point
   at it directly.

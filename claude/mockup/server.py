@@ -22,6 +22,7 @@ from mcp.server.stdio import stdio_server
 from .admission import Service
 from . import claim_entry as claim_entry_mod
 from . import public_dto
+from . import skill_select as skill_select_mod
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = (ROOT / 'runtime').resolve()
@@ -202,6 +203,9 @@ LITE_SIGNATURE = {
     'dom_annotate': ({'claim_id': str, 'kind': str}, {'text': str, 'url': str, 'locator': str, 'name': str, 'value': str,
                                                       'conflict_ref': str, 'reason': str}),
     'dom_distillate': ({'action': str}, {'source': str, 'distillate': str, 'text': str, 'anchors': list, 'by': str, 'note': str}),
+    # Read-only skill router: the handler never touches the ledger, so no identity,
+    # branch or review argument exists here.
+    'dom_skill_select': ({'step': dict}, {'queue': list, 'plan_version': int, 'index_digest': str}),
 }
 # dom_start/dom_find accept requests with a missing 'request' so that the refusal can carry a hint
 # (a transport-level INVALID_ARGUMENTS cannot); everything else is matched exactly.
@@ -335,6 +339,16 @@ def _handle_distillate(service, args):
                               args.get('anchors'), args.get('by'), args.get('note'))
 
 
+def _handle_skill_select(service, args):
+    # Read-only: the service (ledger, identity, review policy) is not consulted.
+    return skill_select_mod.select_step(
+        args['step'],
+        queue=args.get('queue') or [],
+        plan_version=args.get('plan_version', 0),
+        index_digest=args.get('index_digest', ''),
+    )
+
+
 def _handle_reconcile(service, args):
     return service.reconcile()
 
@@ -422,6 +436,7 @@ HANDLERS = {
     'dom_accept': _handle_accept,
     'dom_annotate': _handle_annotate,
     'dom_distillate': _handle_distillate,
+    'dom_skill_select': _handle_skill_select,
     'dom_extract_submit': _handle_extract_submit,
     'dom_init': _handle_init,
     'dom_resume': _handle_resume,

@@ -67,30 +67,16 @@ python -m pip install "mcp>=1.30" "anyio>=4.15" "PyYAML>=6.0"
 On the first prompt the memory is created under `<project>/.dom-memory` and the
 request is recorded verbatim as the root claim — no manual init.
 
-## Release 0.2.6 assets
+## Release 0.3.1 assets
 
-Download from **[GitHub release v0.2.6](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6)**.
+Download from **[GitHub release v0.3.1](https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.3.1)**.
 
-| Asset | Host | Size | SHA256 |
-|---|---|---:|---|
-| `opencode-dom-memory-0.2.6.zip` | OpenCode | 179 665 B | `75097314546c175e95a07041d4966d360359ee92d71b1cb637b908349ab9a56b` |
-| `dom-memory.plugin` | Claude Code | 170 404 B | `927bd8914e2888d8bcddb751f75fd824a76e47c391c04b4447c84073cc67c6ba` |
+0.3.1 adds the skill router pipeline: hierarchical group → filter → deep selection,
+multi-marker consensus (≥3 signals), BM25 char-3-5-gram retrieval, positional
+injection block (≤800 chars), τ-gate fingerprinting, and three-track outcomes
+(read/call/accept, never mixed).
 
-`B` means bytes, not a version. Both assets are ZIP archives; `dom-memory.plugin`
-is a ZIP whose first entry is `.claude-plugin/plugin.json`, the layout the Claude
-desktop app expects. Sizes differ because the OpenCode archive also ships the
-read-only monitor (`opencode/monitor/`) and `package.json`.
-
-Verify a download:
-
-```powershell
-Get-FileHash .\opencode-dom-memory-0.2.6.zip -Algorithm SHA256
-Get-FileHash .\dom-memory.plugin -Algorithm SHA256
-```
-
-```bash
-sha256sum opencode-dom-memory-0.2.6.zip dom-memory.plugin
-```
+Release notes and known limitations: [`docs/releases/0.3.1-notes.md`](docs/releases/0.3.1-notes.md).
 
 Install:
 
@@ -104,8 +90,6 @@ Install:
   `<project>/.dom-memory/observability/monitor.token` and reused on later starts;
   the script prints the URL and token. Open `http://127.0.0.1:8765` and enter the token.
 
-Release notes and known limitations: [`docs/releases/0.2.6-notes.md`](docs/releases/0.2.6-notes.md).
-
 ## Repository layout
 
 ```
@@ -114,7 +98,7 @@ Release notes and known limitations: [`docs/releases/0.2.6-notes.md`](docs/relea
 ├── GET_STARTED.md         detailed installation for both hosts
 ├── NOT_DONE.md            what is not implemented / not finalised (read this)
 ├── LICENSE                MIT
-├── VERSION                current plugin version (0.2.6)
+├── VERSION                current plugin version (0.3.1)
 ├── claude/                self-contained Claude Code plugin tree
 │   ├── .claude-plugin/plugin.json   plugin manifest
 │   ├── .mcp.json                    MCP server (stdio), ${DOM_PYTHON:-python}

@@ -1,0 +1,314 @@
+{
+  "verdict": "Two-level lexical cascade over the exact capability contract (addendum 0.6 shape), with a deferred, confidence-gated dense shadow channel",
+  "confidence": 0.8,
+  "approaches": [
+    {
+      "name": "A. Two-level lexical cascade over the exact capability contract",
+      "complexity": "medium: ~1.2-1.5k LOC core Python + ~80 LOC JS; 1-2 devs, 2-4 weeks after bootstrap",
+      "precision": "medium-high: exact needs->provides gate blocks decoys; char-3-5-gram BM25 + keyword rules give recall; threshold calibrated at the 95th percentile of a negative control instead of a hand-picked 0.3",
+      "latency": "sigma 5-20 ms warm, tau <=8 ms; offline index ~300-500 ms once per digest",
+      "collapse_score": "high: structurally satisfies H1 (idle re-issues only), S1 (max_weight <= priors), C2 (three tracks), C3 (mentions != provides), I-A/I-B/I-C",
+      "deps": "Python 3.11 stdlib + PyYAML (already declared); no network; no model on the hot path",
+      "key_idea": "RECOMMENDED. Offline: collect 150 SKILL.md from documented roots, parse frontmatter/sections into mentions + usage_hint + examples, cache by digest. At each sigma: inherit cap[] from pi (authority), classify phase from the first verb (closed dictionary, unknown is legal), run Stage1 keyword union char-3-5-gram BM25 -> 40-60, Stage2 max(lex)+structural with a negative-control threshold -> 15-20, Stage3b relevance from the in-memory index, Stage4 top-3 with what/why/how where why says 'mentions'. Tau-gate re-emits only when the fingerprint changes. Missing provider is a first-class gap, never a cosine decoy."
+    },
+    {
+      "name": "B. Exact capability join only (needs -> provides)",
+      "complexity": "low: ~150-250 LOC on top of the existing router; one curation pass",
+      "precision": "very high on covered needs (exact, audit-friendly); recall is only ~13% of the catalog because 0 of 150 skill files declare provides",
+      "latency": "<5 ms",
+      "collapse_score": "high against decoys, low against degenerate emptiness: with 87% uncurated the queue is empty for most sigma (R2/R3 and D1 in the collapse audit)",
+      "deps": "none (skill_router.py:141-208 already implements the join)",
+      "key_idea": "CONTROL / SAFE FLOOR. Keep this as the authority inside approach A, not as the whole pipeline. It is the only component allowed to say a need is covered. It cannot satisfy the 'search 150+ descriptions' requirement, and on its own it turns the uncurated majority into permanent gaps."
+    },
+    {
+      "name": "C. Hybrid lexical + confidence-gated dense cascade (AgentIR shape)",
+      "complexity": "high: ~2.2-2.8k LOC including a pinned ONNX runtime, benchmark and cache; 5-7 weeks",
+      "precision": "high if the dense channel adds information, but SkillSeek and AgentIR show the marginal gain over BM25 is small at 150 docs; needs a labelled RU set to prove otherwise",
+      "latency": "sigma 20-60 ms plus a 200-800 ms first-call model load; AgentIR reports a ~52 ms dense channel",
+      "collapse_score": "medium: model drift and non-reproducible scores unless pinned and digest-recorded; egress risk if API-backed",
+      "deps": "onnxruntime + int8 multilingual-e5-small (118 MB) or a pinned API; optional/lazy only",
+      "key_idea": "DEFERRED EVOLUTION (0.9/1.2). Run BM25 first; trigger dense only when the BM25 top-k margin is below a calibrated bar. This is the honest role for embeddings: a shadow reranker over an already-gated candidate set, never a first-stage router and never an authority."
+    },
+    {
+      "name": "D. Dense-first description RAG",
+      "complexity": "high: collector + 3 backends + vector index + cache + benchmark + privacy review",
+      "precision": "low-medium: ranks existing descriptions, so a missing provider becomes a confident cosine decoy; violates the project's core promise",
+      "latency": "10-60 ms plus model load",
+      "collapse_score": "low: hits C2 (gap hidden), C7 (no reproducible why), C8 (floats rejected in claims), C11 (egress); explicitly rejected by rag-audit-report.md C1-C3 and claim 4a452714",
+      "deps": "sentence-transformers/onnxruntime/faiss-class stack or paid API; not allowed by the 0.3.0/0.3.1 'no new dependencies' rule",
+      "key_idea": "REJECTED as primary. Keep only as an optional shadow suggester in tools/, behind a flag, with a pinned model and a derived-cache index. Never the router."
+    },
+    {
+      "name": "E. LLM-mediated retrieval / adjudication loop",
+      "complexity": "high: query rewriting + candidate refinement + schema-validated JSON + caching + redaction",
+      "precision": "potentially high on adjudication, but noisy, non-deterministic and expensive per sigma",
+      "latency": "300 ms-2 s per sigma",
+      "collapse_score": "low: egress (C11), non-determinism (C7), cost per step, and the selector starts grading itself if verdicts feed weights",
+      "deps": "Qwen/Polza API via stdlib urllib, or provider=client; off by default",
+      "key_idea": "REJECTED as default; allowed only as the existing optional S4b adjudicator over top-5, disabled, and after an explicit privacy decision. SkillSeek found an LLM-mediated loop at parity with plain BM25 on 3 of 4 settings while costing more."
+    }
+  ],
+  "winner_rationale": "Approach A wins because every audit finding is answered structurally rather than by tuning. H1: the tau-gate counts only idle re-issues (fingerprint unchanged but the block was re-emitted) and never counts a legitimate (cap,phase) change; legitimate changes are the system working, not a counter leak. S1: outcome weights are clipped to the task prior, effective_weight = min(raw, PRIORS[task_type]), so an agent cannot argue the selector above its innate prior; promotion additionally requires manual/independent review, never auto. C2: three physically separate tracks - read_receipts (storage.py:231, L2), execute.after tool calls (new hook; index.js:419-421 registers only execute.before), and plan_checks/accept - with one reusable invariant test that none substitutes for another. C3: mentions is a separate field produced offline from the text, provides comes only from skills.card.json or frontmatter (skill_router.py:137), and mentions can never satisfy a need; the gap stays visible. I-C: the selector is read-only; an AST check rejects INSERT/UPDATE/DELETE in the hot path and no revision events are emitted. I-A: block size is a function of position (sigma current -> full, sigma+1 -> ids, sigma+2 -> one id, sigma+3/4 -> title only, gaps -> one line), not of confidence. I-B: only score_bp/coverage_bp/fit_bp integers reach the block; confidence lives in the panel and shadow card. The approach also absorbs R7 (work in the upstream checkout, CI identity diff), R2/R3 (manual bootstrap of 20 cards; 87% uncurated is stated, not masked), D-new (cap x phase = 84 resolvable classes with a human-curatable dictionary), the section-3-old defect (rename to mentions), D3 (two separate formulas with separate weights and tests), R8 (result hashed, telemetry excluded), D1 (forced/banned are filters only), D-thr (95th-percentile negative control), D-corr (lex = max(...), not a sum), D4 (coverage_bp and fit_bp separate, partial injection), D2 (bans > forces), D7 (hysteresis once, post-processing), R4 (three tracks), R6 (capability_version + weights_digest in every cache key), D6 (drop RRF), D8 (invariants vs metrics). External evidence points the same way: SkillSeek found plain BM25 at or above an LLM-mediated loop on three of four settings; Field-Aware found structure beats a bigger model at small bank sizes; AgentIR showed a confidence-triggered cascade can skip the dense channel 63-100% of the time at parity; RusBEIR confirms BM25 is a strong Russian baseline once preprocessing handles morphology, which is exactly what char 3-5-grams do. Approach A is the only option that is implementable by 1-2 developers in 2-4 weeks without weakening any non-negotiable invariant.",
+  "modules": [
+    {
+      "name": "PhaseClassifier",
+      "file": "opencode/mockup/skill_phase.py",
+      "loc_est": "80",
+      "deps": "json (phase.json)",
+      "responsibility": "Deterministic sigma-phase from the first verb of the step title; closed RU/EN verb dictionary, lemma/prefix match, unknown on any ambiguity (G1). Emits phase + evidence verb. Never reads the description."
+    },
+    {
+      "name": "SkillCollector / SkillIndex",
+      "file": "opencode/mockup/skill_index.py",
+      "loc_est": "140",
+      "deps": "hashlib, json, pathlib, PyYAML",
+      "responsibility": "Collect 150 SKILL.md in precedence order (~/.claude, ~/.config/opencode, project roots, plugin), parse frontmatter + ## sections, emit mentions/usage_hint/examples/sections, fingerprint = sha256(paths+mtime+size+card_digest+CAPABILITY_VERSION), persist derived JSON under .dom-memory/skill-cache/. Zero disk reads on a warm cache."
+    },
+    {
+      "name": "Tokenizers / Bm25Index",
+      "file": "opencode/mockup/skill_text.py",
+      "loc_est": "140",
+      "deps": "math, re, collections (stdlib)",
+      "responsibility": "normalize/tokens/char_ngrams(3..5) and a ~50-line BM25 (k1=1.5, b=0.75) over 4 fields with FIELD_WEIGHTS name 2.0 / tags 1.5 / description 1.0 / body 0.3. RU inflection and code identifiers are handled by character n-grams, not stemming. Deterministic IDF from the 150-doc corpus."
+    },
+    {
+      "name": "CardStore",
+      "file": "opencode/mockup/skill_cards.py",
+      "loc_est": "80",
+      "deps": "json",
+      "responsibility": "Load skills.card.json, merge over the index, expose provides_for(card). provides order: curated card -> frontmatter metadata.provides -> [] (skill_router.py:133-138). Never derived from description (C3)."
+    },
+    {
+      "name": "StepWindow / QueryCard",
+      "file": "opencode/mockup/skill_query.py",
+      "loc_est": "180",
+      "deps": "mockup.promptizer, mockup.skill_router, skill_phase",
+      "responsibility": "Build the sigma window, distill step text <=600 chars, inherit cap[] from pi via capabilities_from_accept (skill_router.py:53-68), attach phase from sigma, produce QueryCard and the coverage matrix. mode = authoritative only when needs came from accept."
+    },
+    {
+      "name": "RecallChannels",
+      "file": "opencode/mockup/skill_candidates.py",
+      "loc_est": "160",
+      "deps": "skill_text, skill_query",
+      "responsibility": "channel_exact (needs & provides, only cover>0), channel_lexical (BM25 top-15), channel_affinity (weight/history/hints). Fusion keeps via_exact; lex = max(kw, ngram, tfidf) instead of a correlated sum (D-corr). No RRF (D6)."
+    },
+    {
+      "name": "Selector",
+      "file": "opencode/mockup/skill_select.py",
+      "loc_est": "220",
+      "deps": "mockup.skill_router (capabilities_from_accept, rule_groups, PRIORS), skill_candidates, skill_cards",
+      "responsibility": "select_pipeline(): filters (bans > forces > verified > cover; stale digest; drop zero-coverage in authoritative mode), rerank, greedy minimal cover k<=3, single post-hoc hysteresis, coverage_bp + fit_bp separated, gaps[] first-class, fallback=skill_search. Read-only; no plan writes (I-C)."
+    },
+    {
+      "name": "ThresholdCalibrator",
+      "file": "tools/skill_calibrate.py",
+      "loc_est": "90",
+      "deps": "stdlib random/statistics",
+      "responsibility": "Build the negative control (shuffle sigma<->skill pairs preserving degrees), compute the 95th-percentile background score, write threshold + index_digest + capability_version. Runtime reads the calibrated value; it never hardcodes 0.3 (D-thr)."
+    },
+    {
+      "name": "Renderer",
+      "file": "opencode/mockup/skill_render.py",
+      "loc_est": "120",
+      "deps": "none",
+      "responsibility": "render_entry(result, budget=800) with positional gradation (current full, +1 ids, +2 one id, +3/+4 title, gaps one line) and render_shadow_card() with ints/strings only. why always says 'mentions'; no floats (I-A/I-B/H3)."
+    },
+    {
+      "name": "DerivedCache",
+      "file": "opencode/mockup/skill_cache.py",
+      "loc_est": "60",
+      "deps": "json, hashlib",
+      "responsibility": "Keyed get/put/invalidate for index, threshold and optional adjudication; every key includes capability_version and weights_digest (R6). Cache lives under the gitignored .dom-memory/ and never enters the hash chain."
+    },
+    {
+      "name": "OutcomeTracker",
+      "file": "opencode/mockup/skill_outcomes.py",
+      "loc_est": "150",
+      "deps": "none",
+      "responsibility": "classify(event, queue) into hit/miss/error/excess/failure/unknown with prefetch scope=next excluded from failure; apply_weight clips to [0, PRIORS[task_type]] (S1); keeps the three tracks separate (C2)."
+    },
+    {
+      "name": "CLI",
+      "file": "opencode/mockup/skill_cli.py",
+      "loc_est": "90",
+      "deps": "all of the above",
+      "responsibility": "main(argv) -> JSON on stdout. Emits a deterministically hashed result object and a separate telemetry object so metrics.ms cannot break reproducibility (R8)."
+    },
+    {
+      "name": "JS bridge (tau-gate + entry + outcomes)",
+      "file": "opencode/index.js",
+      "loc_est": "+80 (JS)",
+      "deps": "node (existing plugin)",
+      "responsibility": "skillStep(): fingerprint = hash(active_step_id, cap_set, phase, plan_version, index_digest); re-emit only when fp changes; count idle re-issues only and cap those (H1). put/remove the dom.skill-queue instruction entry with tail injection fallback via event.system.push (index.js:388-392), and register execute.after (currently only execute.before at :419-421)."
+    },
+    {
+      "name": "Curated data",
+      "file": "opencode/mockup/skills.card.json + phase.json",
+      "loc_est": "data",
+      "deps": "skill_router.CAPABILITY_VERSION",
+      "responsibility": "20 verified provides cards and the closed phase v1 dictionary, both versioned with capability_version; unknown is an explicit value, not a heuristic."
+    },
+    {
+      "name": "Optional benchmark + dense shadow",
+      "file": "tools/skill_bench.py, tools/skill_dense.py, tools/polza_llm.py",
+      "loc_est": "200 + 120 + 60",
+      "deps": "lazy imports only (onnxruntime / urllib)",
+      "responsibility": "Offline measurement of char-ngram TF-IDF vs BM25 vs int8 e5-small vs a pinned API; and the confidence-gated dense channel. Never imported by tests/check_* or the hot path."
+    },
+    {
+      "name": "Test suite",
+      "file": "tests/check_skill_index.py, check_skill_text.py, check_skill_query.py, check_skill_select.py, check_skill_render.py, check_skill_outcomes.py, check_skill_phase.py",
+      "loc_est": "~700",
+      "deps": "python + node only, no network",
+      "responsibility": "Property-based invariants: mentions never becomes provides; empty provides -> empty queue + full gaps (no decoy); bans > forces; byte-identical result across two runs; entry <=800; integers only; no write statements in the hot path; selector emits no revision events; sigma rename does not re-emit the block."
+    }
+  ],
+  "stages": [
+    {
+      "id": "E0",
+      "name": "Freeze decisions and placement",
+      "depends_on": [],
+      "acceptance": "Q1-Q5 answered in writing; development happens in the upstream checkout (R7); CI job proves claude/mockup == opencode/mockup byte-for-byte; the micro-step registry schema (Q2) is recorded."
+    },
+    {
+      "id": "E1",
+      "name": "Registry: additive cap[] and phase + phase dictionary v1",
+      "depends_on": ["E0"],
+      "acceptance": "Migration is additive; the hash of the existing ledger is unchanged before/after; phase.json is closed and versioned; unknown is an explicit value."
+    },
+    {
+      "id": "E2",
+      "name": "Offline indexer (collect + parse + mentions + examples)",
+      "depends_on": ["E0"],
+      "acceptance": "All 150 SKILL.md indexed; per-file digest cache; a second run performs 0 file reads; two files without frontmatter degrade to state=unverified, not a crash; no provides is invented."
+    },
+    {
+      "id": "E3",
+      "name": "Curate top-20 provides cards",
+      "depends_on": ["E0"],
+      "acceptance": "20 cards state=verified, each with evidence; review is manual or independent, never auto (G3/S2); the remaining ~130 skills are explicitly reported as uncurated, not silently covered (R2)."
+    },
+    {
+      "id": "E4",
+      "name": "Phase classifier + label 20 sigma",
+      "depends_on": ["E1"],
+      "acceptance": "unknown <= 20% on the labelled sample; exact-verb matches only; a synonym paraphrase test does not flip the phase (G1); collision -> unknown + panel flag."
+    },
+    {
+      "id": "E5",
+      "name": "Stage 1-2 + negative control -> calibrated threshold",
+      "depends_on": ["E2", "E3", "E4"],
+      "acceptance": "Threshold equals the 95th percentile of the shuffled-pair distribution and is stored with index_digest + capability_version; no hand-picked 0.3; gap cases produce empty coverage, not decoys."
+    },
+    {
+      "id": "E6",
+      "name": "Stage 3b-4 + positional render",
+      "depends_on": ["E5"],
+      "acceptance": "Entry <= 800 chars at 4 skills; why contains 'mentions' and a file:section source; no floats; sigma rename does not change the block; partial injection keeps gaps visible."
+    },
+    {
+      "id": "E7",
+      "name": "MCP tool transport + JS tau-gate",
+      "depends_on": ["E6"],
+      "acceptance": "sigma p95 <= 120 ms warm; tau p95 <= 8 ms; idle re-issue counter (fp unchanged) is capped while legitimate changes are uncounted (H1); tool-unavailable degrades to a silent cached block or spawn fallback, never to a wrong block (D3/H4)."
+    },
+    {
+      "id": "E8",
+      "name": "Regression and release gate for v0.3.1",
+      "depends_on": ["E1", "E2", "E3", "E4", "E5", "E6", "E7"],
+      "acceptance": "The four existing checks (smoke_cold_start, check_plan_context, check_inbox_status, check_plan_identity) pass unchanged; ledger hash unchanged; no network and no optional import in tests/check_*; result is byte-identical on two runs; release notes state coverage is 20/150."
+    }
+  ],
+  "risks": [
+    {
+      "id": "R1",
+      "desc": "Confident decoy: a lexical score admits a skill that merely mentions sqlite/migration/security, so the gap disappears behind a plausible recommendation (C3 + C2).",
+      "P": "high",
+      "I": "critical",
+      "detection": "Negative-control gap cases in check_skill_select; a decoy audit over >=20 labelled sigma; assert that mentions never populates provides; monitor fallback_search_rate.",
+      "mitigation": "Exact needs->provides gate is the only authority; mentions is a separate field; lexical channels may rank but never admit; the threshold is the 95th percentile of the shuffled-pair background; gap + skill_search is rendered explicitly."
+    },
+    {
+      "id": "R2",
+      "desc": "Coverage illusion: 0 of 150 skill files declare provides, so ~87% of the catalog is outside authority while the queue looks authoritative over 13% (R2/R3 in the addendum; D1 in the collapse audit).",
+      "P": "high",
+      "I": "critical",
+      "detection": "Per-release coverage report; count sigma with empty coverage; compare curated-provider count against the 14-capability dictionary; panel shows the coverage matrix.",
+      "mitigation": "Bootstrap 20 cards manually before any selector code; state the 20/150 limit in the release notes; every uncovered capability becomes a visible gap claim; never let advisory/lexical candidates masquerade as coverage."
+    },
+    {
+      "id": "R3",
+      "desc": "Self-grading loop: outcome weights or card promotion outrun the priors, so a wrong label hardens into a permanent choice (S1/S2).",
+      "P": "medium",
+      "I": "high",
+      "detection": "Unit test that effective_weight <= PRIORS[task_type]; audit the first 30 labels manually; watch the weight distribution for saturation at 1.0; promotion log requires an independent reviewer id.",
+      "mitigation": "effective_weight = min(raw_weight, PRIORS[task_type]); clip 0..1; decay x0.98/10 and reset /100; promotion only from outcomes plus manual/independent review; fit is a hypothesis, the label comes from call_track/accept_track."
+    },
+    {
+      "id": "R4",
+      "desc": "Prompt-cache instability: the injected block churns on every sigma, or a float leaks into it, invalidating the provider prefix and inflating cost (I-A/I-B, H1, H3; see the prompt-caching mis-integration study).",
+      "P": "medium",
+      "I": "high",
+      "detection": "Economic contour: cached-token ratio, block re-issue count, byte-diff of the block across adjacent sigma with the same (cap,phase); renderer test forbids floats; two-run hash equality.",
+      "mitigation": "Fingerprint = hash(active_step_id, cap_set, phase, plan_version, index_digest); silence when unchanged; count only idle re-issues; positional gradation; integers only; tail placement; entry <=800 chars."
+    },
+    {
+      "id": "R5",
+      "desc": "Transport collapse: the MCP server dies or a spawn costs 150-400 ms per sigma, so the block is stale or the interactive loop stalls (D3/H4).",
+      "P": "medium",
+      "I": "high",
+      "detection": "Health-check latency histogram; count tool failures and spawn fallbacks; alert on p95 sigma >120 ms or tau >8 ms; monitor stale index_digest.",
+      "mitigation": "Primary transport is a tool in the already-running MCP server; on failure the tau-gate keeps serving the cached block (never a partial or wrong one); a slow spawn fallback exists as last resort with a circuit breaker; server state is invalidated by index_digest."
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q1",
+      "question": "Are skill_router.py, capabilities.json, promptizer.py and check_skill_router.py in the shipped tree, or only in the repo mirror? README 0.2.4 does not mention them and VERSIONS.md:31-35 says 0.3.1 is docs-only.",
+      "blocks": "E0-E1 effort estimate",
+      "why": "The files exist at opencode/mockup/skill_router.py:1-224 and capabilities.json:1-27, and the concept cites tests/check_skill_router.py, but the live install (VERSIONS.md:5-14) is 0.2.6. If they are mirror-only, keyword rules and capabilities_from_accept must be re-authored."
+    },
+    {
+      "id": "Q2",
+      "question": "What is the actual schema of the micro-step registry: does it already have scope/action fields, and how is a sigma revision recorded?",
+      "blocks": "E1 and the whole two-level needs model",
+      "why": "Determines whether cap[] and phase are additive or require a new entity; also determines whether a rename is a revision (identity preserved) or a new node, which the block fingerprint depends on."
+    },
+    {
+      "id": "Q3",
+      "question": "Is development in the upstream engine or this mirror?",
+      "blocks": "all",
+      "why": "R7: edits in opencode/mockup/ are overwritten by tools/sync_from_upstream.py; a CI identity check is an E0 deliverable."
+    },
+    {
+      "id": "Q4",
+      "question": "Who may correct the registry at a step: the plan agent, the human, or both through a revision?",
+      "blocks": "I-C boundary",
+      "why": "The selector must stay read-only; if the agent can also rewrite sigma, the queue becomes self-confirming (the acknowledged anti-pattern)."
+    },
+    {
+      "id": "Q5",
+      "question": "Is the two-level needs model (cap[] from pi + phase from sigma) approved as the key decision?",
+      "blocks": "E4-E6",
+      "why": "Without it, per-step re-evaluation collapses to a constant queue and prefetch is meaningless."
+    },
+    {
+      "id": "Q6",
+      "question": "May advisory candidates appear in the prompt before any step has accept, or only in the ledger/panel?",
+      "blocks": "E6 default mode",
+      "why": "The live ledger currently has 0 accept and 0 needs; the answer decides whether day-one usefulness comes from injection or only from shadow measurement."
+    },
+    {
+      "id": "Q7",
+      "question": "Is the dense channel (and egress to an embedding API) allowed at all, and if so which model is pinned?",
+      "blocks": "0.9/1.2 only",
+      "why": "Not needed for the winner; SkillSeek/AgentIR suggest the marginal gain over BM25 is small at 150 docs, and the multilingual int8 model is 118 MB, not the claimed 80 MB."
+    },
+    {
+      "id": "Q8",
+      "question": "Does this host build expose session.instructions.entry.put/remove, and do subagents inherit dom.skill-queue?",
+      "blocks": "E7 transport choice",
+      "why": "index.js currently has no instructions reference and only a tail event.system.push fallback (index.js:388-392); the entry API must be spiked before the tau-gate is wired."
+    }
+  ]
+}

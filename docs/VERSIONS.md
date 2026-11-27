@@ -7,31 +7,37 @@ Three lines are kept at all times. They are separate on purpose: a live install 
 | Field | Value |
 |---|---|
 | Branch | `main` |
-| Tag | `v0.2.6` |
-| Version | `0.2.6` |
+| Tag | `v0.3.1` |
+| Version | `0.3.1` |
 | Install target | `...omh-baseline-dom-mcp/.claude/worktrees/mcp-llm-server-054018/dist/claude/dom-memory` |
-| Contents | observability: resolver, prompt snapshot, hook journal, read-only monitor |
-| GitHub | `https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.2.6` |
+| Contents | skill router pipeline (0.3.1) + trusted write loop (0.3.0) + observability (0.2.6) |
+| GitHub | `https://github.com/Dropingcat/dom-memory-plugin/releases/tag/v0.3.1` |
 
 Rules: only a verified release is installed here; no feature branch code is copied into this target.
 
-## 2. Pre-release
+## 2. Released history
+
+| Tag | Contents |
+|---|---|
+| `v0.3.0` | trusted write loop: `WriteContext`, `claim_sessions`, `read_receipts`, DB-path health, advisory gate (L1–L8) |
+| `v0.2.6` | observability: resolver, prompt snapshot, hook journal, read-only monitor |
+| `v0.2.4` | semantic bridge baseline |
+
+## 3. Current line
 
 | Field | Value |
 |---|---|
-| Branch | `feature/trusted-write-loop-0.3.0` |
-| Version | `0.3.0` (unreleased) |
-| Contents | `WriteContext`, `claim_sessions`, `read_receipts`, DB gate |
-| Plan | `docs/superpowers/plans/2026-11-23-trusted-write-loop-0.3.0.md` |
+| Version | `0.3.1` |
+| Contents | skill router: step registry (π/σ/τ), multi-marker consensus, BM25 char-ngram, hierarchical group filter, deep analysis + render, τ-gate, three-track outcomes, MCP tool `dom_skill_select` |
+| Tests | 33 groups, 0 failed (one pre-existing `probe_mcp_plan_ingest` needs the optional `mcp` package) |
+| Plan | `C:\Users\Arhys\.opencode\plan\2026-11-27-skill-router-full-plan.md` |
 
-Rules: branch starts from live `main`; it is not installed into the live target until it passes checks and is tagged. The previous pre-release branch `feature/observability-0.2.6` is kept as history.
-
-## 3. Planned features
+## 4. Planned features
 
 | Field | Value |
 |---|---|
-| Version | `0.3.1+` (planned) |
-| Contents | native OpenCode Panel, retrieval work, TRIZ/tech-card module, penalty/token-budget loop |
+| Version | `0.3.2+` (planned) |
+| Contents | `dom doctor`, `dom install`, CLI entry point (`[project.scripts]`), packaging, drift gate |
 | Status | docs only; no code until promoted into a pre-release branch |
 
 ## Promotion

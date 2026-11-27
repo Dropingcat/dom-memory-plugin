@@ -1637,6 +1637,18 @@ TOOL_DOCS['dom_claim']['summary'] += (' Required per type (refused with MISSING_
                                       + '; '.join('%s: %s' % (t, ', '.join(REQUIRED_FIELDS[t]) or 'nothing extra') for t in TYPES)
                                       + '. text with classification=factual also needs evidence.')
 
+TOOL_DOCS['dom_skill_select'] = {
+    'summary': 'Select the top-3 skills for the current micro-step. Read-only and deterministic: the same step, skills and cards always produce the same ids and the same block. The multi-marker classifier needs at least two independent signals, a skill enters the queue only with at least three, and every gap stays visible.',
+    'arguments': {
+        'step': _arg('object', True, 'The micro-step: {title, context, cap[], markers, category_hint, claims[], step_id, plan_version}. Missing fields are derived, never invented.'),
+        'queue': _arg('array', False, 'Next 0-3 micro-steps (same shape), used only to prefetch their top skill id.'),
+        'plan_version': _arg('integer', False, 'Plan version for the block fingerprint (default: the step value or 0).'),
+        'index_digest': _arg('string', False, 'sha256 of the skill index; omitted means it is computed from the records.'),
+    },
+    'returns': 'status SKILLS_SELECTED, block (<=800 chars, what/why/how + prefetch + gap line), queue, advisory, gaps, prefetch, missing_caps, groups, confidence_bp (integer basis points), signals.',
+    'example': {'step': {'title': 'Add the sqlite migration for the ledger schema', 'cap': ['sqlite', 'migration'], 'category_hint': 'databases'}},
+}
+
 LITE_TOOL_NAMES = tuple(TOOL_DOCS)
 
 
