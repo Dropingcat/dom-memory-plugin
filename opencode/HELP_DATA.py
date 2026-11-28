@@ -637,6 +637,12 @@ HELP_DATA: dict[str, dict] = {
                  '3) При ошибке любого инструмента вызвать dom_help с его именем и выполнить шаги из help. '
                  '4) Помнить: вызов read-only, ledger не меняется.'),
     },
+    # ---- strict-only tools -------------------------------------------------
+    # dom_init, dom_submit, dom_append and dom_snapshot exist ONLY in the strict
+    # profile: server.LITE_SIGNATURE and claim_entry.LITE_TOOL_NAMES (the main,
+    # lite profile) leave them out, so the transport answers UNKNOWN_TOOL there.
+    # Their help cards must not promise an outcome the caller cannot reach
+    # (T1 F7), hence the explicit "strict only" note in each help text.
     'dom_init': {
         'usage': 'dom_init(external_work_ref, policy_digest)',
         'preconditions': [
@@ -668,7 +674,8 @@ HELP_DATA: dict[str, dict] = {
         'help': ('Тебе НУЖНО: 1) Использовать только в strict/lab-профиле (в lite вместо него dom_start). '
                  '2) Передать external_work_ref и policy_digest ровно из launch-конфигурации. '
                  '3) Не пытаться вычислить policy_digest. '
-                 '4) Один вызов создаёт/проверяет привязку; повтор с теми же аргументами безопасен.'),
+                 '4) Один вызов создаёт/проверяет привязку; повтор с теми же аргументами безопасен. '
+                 '5) Помнить: dom_init есть только в strict-профиле — в lite его нет, там dom_start.'),
     },
     'dom_resume': {
         'usage': 'dom_resume(branch, limit?, after?)',
@@ -740,7 +747,8 @@ HELP_DATA: dict[str, dict] = {
                  '2) Передать его строкой в payload_json. '
                  '3) При REJECTED прочитать errors[] и исправить поля. '
                  '4) Затем dom_candidate → dom_review → dom_admit: submit сам ничего не принимает. '
-                 '5) Для повтора использовать тот же idempotency_key.'),
+                 '5) Для повтора использовать тот же idempotency_key. '
+                 '6) Помнить: dom_submit есть только в strict-профиле — в lite его нет.'),
     },
     'dom_review': {
         'usage': 'dom_review(candidate_id, intent_digest, decision?, note?)',
@@ -870,7 +878,8 @@ HELP_DATA: dict[str, dict] = {
         'help': ('Тебе НУЖНО: 1) Собрать пакет operation="append" с событиями (comment/link/property/applicability/archive) '
                  'в payload_json. 2) Помнить: это кандидат, а не обход review. '
                  '3) Пройти dom_candidate → dom_review → dom_admit. '
-                 '4) Для одиночной аннотации использовать dom_annotate.'),
+                 '4) Для одиночной аннотации использовать dom_annotate. '
+                 '5) Помнить: dom_append есть только в strict-профиле — в lite его нет.'),
     },
     'dom_query': {
         'usage': 'dom_query(branch, revision?)',
@@ -929,7 +938,8 @@ HELP_DATA: dict[str, dict] = {
         'help': ('Тебе НУЖНО: 1) Помнить, что dom_snapshot — синоним dom_query с той же схемой. '
                  '2) Передать branch и, при необходимости, revision. '
                  '3) Предпочитать dom_query в новом коде. '
-                 '4) Для истории версий claim использовать dom_claim_versions.'),
+                 '4) Для истории версий claim использовать dom_claim_versions. '
+                 '5) Помнить: dom_snapshot есть только в strict-профиле — в lite его нет.'),
     },
     'dom_trace': {
         'usage': 'dom_trace(branch?)',
