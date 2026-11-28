@@ -269,16 +269,34 @@ def argument_hint(name):
             % (name, ', '.join(required) or 'none', ', '.join(optional) or 'none'))
 
 
+ARGUMENT_HELP_LIMIT = 500  # public_dto.HELP_LIMIT: never build help that will be cut mid-item
+
+
 def argument_help(name):
-    """Russian, imperative help for a transport argument-binding refusal."""
+    """Russian, imperative help for a transport argument-binding refusal.
+
+    The text is bounded by ``ARGUMENT_HELP_LIMIT``: a long signature (dom_claim
+    lists ~40 optional anatomy/link fields) would otherwise be truncated by
+    ``public_dto.HELP_LIMIT`` in the middle of the enumeration and lose the
+    final "Повторить вызов" step (audit A2, M1). A long signature is compacted
+    to its required arguments plus a pointer to the full card in ``dom_help``.
+    """
     if name not in SIGNATURE:
         return ('Тебе НУЖНО: 1) Вызвать dom_describe — он вернёт список инструментов профиля. '
                 '2) Выбрать имя из списка. 3) Повторить вызов.')
     required, optional = SIGNATURE[name]
-    return ('Тебе НУЖНО: 1) Передать аргументы %s строго по сигнатуре: обязательные — %s, необязательные — %s. '
+    text = ('Тебе НУЖНО: 1) Передать аргументы %s строго по сигнатуре: обязательные — %s, необязательные — %s. '
             '2) Убрать неизвестные ключи и не менять типы. 3) Помнить: profile, review_level, principal и work '
             'задаются при запуске сервера. 4) Повторить вызов.'
             % (name, ', '.join(required) or 'нет', ', '.join(optional) or 'нет'))
+    if len(text) <= ARGUMENT_HELP_LIMIT:
+        return text
+    return ('Тебе НУЖНО: 1) Передать аргументы %s строго по сигнатуре: обязательные — %s. '
+            '2) Полный список необязательных полей вернёт dom_help({"tool": "%s"}). '
+            '3) Убрать неизвестные ключи и не менять типы. '
+            '4) Помнить: profile, review_level, principal и work задаются при запуске сервера. '
+            '5) Повторить вызов.'
+            % (name, ', '.join(required) or 'нет', name))
 
 
 def strict_arguments(name, arguments):
@@ -391,6 +409,16 @@ def handle_dom_skill_select(step, queue=None, plan_version=0, index_digest=''):
         raise Denied('INVALID_ARGUMENTS', field='step', hint='step is missing or not an object',
                      help=('Тебе НУЖНО: 1) Передать step — объект с title, например '
                            '{"title": "Add the sqlite migration"}. 2) Повторить вызов.'))
+    # F6: queue is the next 0-3 micro-steps (same shape as step).  A non-object
+    # element reached the pipeline as a Python TypeError -> INTERNAL_ERROR with a
+    # "retry" hint; here it is a deterministic argument refusal instead.
+    if queue is None:
+        queue = []
+    if type(queue) is not list or any(type(item) is not dict for item in queue):
+        raise Denied('INVALID_ARGUMENTS', field='queue',
+                     hint='queue must be an array of micro-step objects (each with title/context/cap)',
+                     help=('Тебе НУЖНО: 1) Передать queue как массив объектов-шагов (micro-step). '
+                           '2) Каждый элемент — объект с title, а не строка и не число.'))
     title = str(step.get('title', '') or '')
     if len(title) > SKILL_SELECT_MAX_TITLE:
         raise Denied('INVALID_FIELD', field='step.title',

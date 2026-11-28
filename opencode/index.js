@@ -183,10 +183,18 @@ export function stepFromBrief(note) {
   if (!line) return null
   const body = line.replace(/^\s*CURRENT(?: \(auto\))?:\s*/i, "").trim()
   const match = /^(\S+)\s+"(.*)"\s*\[/.exec(body) || /^(\S+)\s+"(.*)"/.exec(body)
-  if (!match) return null
+  if (!match) {
+    // A CURRENT line that does not parse is a producer degradation, not "no plan":
+    // make it visible instead of silently skipping the skill queue.
+    console.warn("[dom-memory] brief parse failed:", text.slice(0, 100))
+    return null
+  }
   const stepId = match[1].trim()
   const title = match[2].trim()
-  if (!stepId || !title) return null
+  if (!stepId || !title) {
+    console.warn("[dom-memory] brief parse failed:", text.slice(0, 100))
+    return null
+  }
   const step = { step_id: stepId, title, cap: [] }
   const capMatch = /\bCAP:\s*([\w,-]+)\s*$/i.exec(body)
   if (capMatch) {
@@ -407,15 +415,15 @@ export async function register(ctx) {
     if (domDir) args.push("--directory", domDir)
     const result = run(queueProducer, args, "", sessionID, skillTimeoutMs)
     if (result.error) {
-      console.warn(`[dom-memory] skill-producer: ${result.error.message}`)
+      console.warn("[dom-memory] skill-producer: timeout/error:", result.error.message)
       return { status: "error", error: result.error.message }
     }
     let data
     try {
       data = JSON.parse(result.stdout)
-    } catch {
-      const detail = result.stderr ? `: ${result.stderr.trim().slice(0, 200)}` : ""
-      console.warn(`[dom-memory] skill-producer: unparsable output${detail}`)
+    } catch (error) {
+      const detail = result.stderr ? `; stderr: ${result.stderr.trim().slice(0, 200)}` : ""
+      console.warn("[dom-memory] skill-producer: timeout/error:", `${error.message}${detail}`)
       return { status: "error", error: "unparsable output" }
     }
     if (data?.status !== "OK" || typeof data.block_text !== "string" || !data.block_text.trim()) {
@@ -440,15 +448,32 @@ export async function register(ctx) {
       return { status: "idle", skill_id: top, idle: idleCount, fingerprint }
     }
     const text = data.block_text.trim()
-    /* Entry transport first (the host announces it at the next step boundary); the
-       request under assembly is the native fallback, the deferred queue the last. */
-    const entry = ctx.session?.instructions?.entry
-    if (typeof entry?.put === "function") entry.put("dom.skill-queue", text)
-    else if (typeof entry?.set === "function") entry.set("dom.skill-queue", text)
-    else if (Array.isArray(event?.system)) event.system.push({ type: "text", text })
-    else queue(sessionID, text)
+    /* F1: `entry.put` is not verifiable from inside the hook — in the live host it
+       returned normally and the block never reached the prompt.  The request under
+       assembly (`event.system`) is the channel whose delivery can be checked here,
+       so the entry is only the first attempt and `event.system.push` is both the
+       fallback and the verification.  The status follows the observed delivery, not
+       the attempt: nothing is logged as `injected` until the block is seen. */
+    const delivery = deliverSkillBlock(sessionID, event, text)
+    if (delivery.status !== "injected") {
+      console.warn(
+        `[dom-memory] skill-queue ${delivery.status}: ${top} not delivered ` +
+          `(${text.length} chars, fp ${fingerprint.slice(0, 12)})` +
+          (delivery.error ? `: ${delivery.error}` : ""),
+      )
+      return {
+        status: delivery.status,
+        skill_id: top,
+        queue: queueList,
+        gaps: Array.isArray(data.gaps) ? data.gaps.map((gap) => String(gap)) : [],
+        confidence_bp: Number(data.confidence_bp) || 0,
+        fingerprint,
+        via: delivery.via,
+        error: delivery.error,
+      }
+    }
     console.log(
-      `[dom-memory] skill-queue injected: ${top} (${text.length} chars, idle ${idleCount}, ` +
+      `[dom-memory] skill-queue injected via ${delivery.via}: ${top} (${text.length} chars, idle ${idleCount}, ` +
         `fp ${fingerprint.slice(0, 12)})`,
     )
     return {
@@ -458,7 +483,40 @@ export async function register(ctx) {
       gaps: Array.isArray(data.gaps) ? data.gaps.map((gap) => String(gap)) : [],
       confidence_bp: Number(data.confidence_bp) || 0,
       fingerprint,
+      via: delivery.via,
     }
+  }
+
+  /* Deliver the queue block and report what was actually observed.  Order:
+       1. keyed instruction entry (announced by the host at the next step boundary),
+       2. `event.system` — the request under assembly; its delivery is verifiable,
+       3. the deferred queue (pending notes) as the last resort.
+     An entry that neither throws nor mirrors into `event.system` cannot be proven
+     here, so it is reported as `unverified` and warned about instead of `injected`. */
+  const deliverSkillBlock = (sessionID, event, text) => {
+    const entry = ctx.session?.instructions?.entry
+    const seen = () =>
+      Array.isArray(event?.system) &&
+      event.system.some((block) => typeof block?.text === "string" && block.text.includes(text))
+    let entryError = null
+    try {
+      if (typeof entry?.put === "function") entry.put("dom.skill-queue", text)
+      else if (typeof entry?.set === "function") entry.set("dom.skill-queue", text)
+    } catch (caught) {
+      entryError = caught instanceof Error ? caught.message : String(caught)
+      console.warn(`[dom-memory] skill-queue: entry.put failed: ${entryError}`)
+    }
+    if (seen()) return { status: "injected", via: "entry", error: entryError }
+    if (Array.isArray(event?.system)) {
+      event.system.push({ type: "text", text })
+      if (seen()) return { status: "injected", via: "system", error: entryError }
+      return { status: "error", via: "system", error: "block missing after push" }
+    }
+    if (!entryError && (typeof entry?.put === "function" || typeof entry?.set === "function")) {
+      return { status: "unverified", via: "entry", error: "entry.put not verifiable" }
+    }
+    queue(sessionID, text)
+    return { status: "queued", via: "queue", error: entryError }
   }
 
   const executeBefore = async (event, output) => {
@@ -587,6 +645,16 @@ export async function register(ctx) {
       /* Skill queue producer: run after the plan is ingested (its note joins the
          notes) and before the snapshot, so the injected block is attributable to
          this request.  Advisory: failures are recorded, never thrown. */
+      if (!Array.isArray(event?.system)) {
+        let assigned = false
+        try {
+          event.system = []
+          assigned = Array.isArray(event.system)
+        } catch {
+          /* a frozen event keeps the entry/queue fallback */
+        }
+        if (!assigned) console.warn("[dom-memory] context hook: event.system unavailable")
+      }
       let skillQueue = null
       try {
         skillQueue = skillQueueFor(sessionID, event)
@@ -595,8 +663,8 @@ export async function register(ctx) {
       }
       const injectedText = notes.join("\n\n")
       if (notes.length) {
-        if (!Array.isArray(event.system)) event.system = []
-        event.system.push({ type: "text", text: injectedText })
+        if (Array.isArray(event?.system)) event.system.push({ type: "text", text: injectedText })
+        else console.warn("[dom-memory] context hook: event.system unavailable — notes not delivered")
       }
       const snapshot = observability.snapshot(event, { source: "dom.context", notes })
       observability.record({
@@ -616,6 +684,7 @@ export async function register(ctx) {
               skill_id: skillQueue.skill_id ?? null,
               idle: skillQueue.idle ?? 0,
               fingerprint: skillQueue.fingerprint ? skillQueue.fingerprint.slice(0, 16) : null,
+              via: skillQueue.via ?? null,
               error: skillQueue.error ?? null,
             }
           : null,

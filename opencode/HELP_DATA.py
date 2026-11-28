@@ -203,7 +203,8 @@ HELP_DATA: dict[str, dict] = {
         ],
         'help': ('Тебе НУЖНО: 1) Найти claim_id через dom_find и прочитать текущую версию. '
                  '2) Передать полный новый text и непустой reason. '
-                 '3) Передать expected_current=claim_id прочитанной версии — иначе при гонке придёт CONFLICT_READ_REQUIRED. '
+                 '3) Передать expected_current=claim_id прочитанной версии — тогда при гонке придёт CONFLICT_READ_REQUIRED. '
+                 'Без него auto обновляет без сверки версии: расхождение только предупредит в run-логе. '
                  '4) Если текущая версия чужая и не подходит — mode=fork. '
                  '5) Корневой request не обновляется (ROOT_IMMUTABLE).'),
     },

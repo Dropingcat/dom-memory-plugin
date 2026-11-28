@@ -23,6 +23,9 @@ from .session import same_db_path
 
 LITE_POLICY_DOC = {'version': 'lite-policy/v1', 'profile': 'lite'}
 BRANCH_RE = re.compile(r'^[A-Za-z0-9_-]{1,32}$')
+# Server claim ids are uuid4 strings (admission.py); anything else in anatomy.basis
+# is a source ref ('plan:...', 'llm:...') or a package-local sibling id ('c1').
+CLAIM_ID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 MAX_TEXT_BYTES = 1 << 20
 MAX_BRANCHES = 64
 TYPES = ('quote', 'decision', 'formula', 'code', 'data', 'concept', 'text')
@@ -532,6 +535,22 @@ def _validated_claim_args(svc, branch, typ, text, fields):
         if bad:
             raise Denied('INVALID_FIELD', field=bad[0].split('.', 1)[-1],
                          hint='basis/usage/keywords: arrays of non-empty strings (<=64, <=512 chars); refines/purpose: non-empty strings.')
+    # F4: an immutable record must not carry a dangling claim reference.  'basis'
+    # also holds source refs ('plan:...', 'llm:...', 'customer:request') and
+    # package-local ids ('c1' of a sibling item), so only UUID-shaped entries are
+    # claim ids to resolve; 'refines' gets the same existence check in claim().
+    claim_refs = [ref for ref in (anatomy.get('basis') or []) if CLAIM_ID_RE.match(ref)]
+    if claim_refs:
+        with svc.store.read() as c:
+            marks = ','.join('?' * len(claim_refs))
+            rows = c.execute('SELECT id, origin_branch FROM claims WHERE id IN (%s)' % marks, claim_refs).fetchall()
+        found = {row['id'] for row in rows if row['origin_branch'] in svc.context.branches}
+        missing = [claim_id for claim_id in claim_refs if claim_id not in found]
+        if missing:
+            raise Denied('INVALID_FIELD', field='basis',
+                         hint="'basis' must be claim_ids of existing claims (dom_find); not found: %s." % ', '.join(missing[:3]),
+                         help=('Тебе НУЖНО: 1) Проверить claim_id через dom_find. '
+                               '2) Использовать существующий claim_id.'))
     return raw, args, refs, reason, origin_version, anatomy
 
 
@@ -910,7 +929,11 @@ def update(svc, claim_id, text, reason, idempotency_key=None, anatomy=None, expe
                      help='Тебе НУЖНО: 1) Передать expected_current=claim_id прочитанной версии строкой. 2) Взять его из dom_claim_versions. 3) Повторить dom_update.')
     if expected_current is not None or mode != 'auto':
         return _guarded_update(svc, claim_id, text, reason, idempotency_key, anatomy, expected_current, mode)
-    return _plain_update(svc, claim_id, text, reason, idempotency_key, anatomy)
+    # F9: auto mode carries no expected_current, so nothing confirms that claim_id is
+    # still the live version.  Read the current version first; a discrepancy that the
+    # NOT_CURRENT guards do not catch is not turned into a refusal here, but the blind
+    # overwrite is logged.
+    return _plain_update(svc, claim_id, text, reason, idempotency_key, anatomy, warn_if_stale=True)
 
 
 def _guarded_update(svc, claim_id, text, reason, idempotency_key, anatomy, expected_current, mode):
@@ -1002,7 +1025,28 @@ def _fork(svc, current, text, reason, base_author):
                            {'tool': 'dom_reconcile', 'arguments': {}, 'why': 'merges the fork when both versions become equal again'}]}
 
 
-def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=None):
+def _warn_stale_auto_update(svc, claim_id, resolution):
+    """F9: auto mode without expected_current replaces the id it was given when the
+    current-version read disagrees but the NOT_CURRENT guards did not catch it (a
+    merge edge).  The update is allowed, but the blind overwrite goes to the run log
+    so it can be traced.
+
+    Logging is a trace, never a dependency: a record that cannot be written is
+    dropped silently, so it can not break the agent."""
+    current = resolution.get('last_claim_id')
+    try:
+        from .runlog import log_record
+        log_record(svc.directory, {
+            'event': 'dom_update.stale_overwrite', 'tool': 'dom_update',
+            'claim_id': claim_id, 'current_claim_id': current, 'status': resolution.get('status'),
+            'warning': ('dom_update without expected_current replaced %s while the current version is %s; '
+                        'pass expected_current=<claim_id you read> to get CONFLICT_READ_REQUIRED instead'
+                        % (claim_id, current))})
+    except Exception:
+        pass
+
+
+def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=None, warn_if_stale=False):
     Denied = _denied_for('dom_update')
     _lite_only(svc)
     svc.scope()
@@ -1026,6 +1070,8 @@ def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=Non
         branch = row['origin_branch']
         children = _children(c)
         archived = _archived(c)
+        # F9: auto mode reads the current version before a blind overwrite.
+        resolution = resolve_claim(c, claim_id) if warn_if_stale else None
         old_raw = bytes(row['raw'])
         old_item = json.loads(row['payload'])
         old_rowid = row['rid']
@@ -1059,6 +1105,10 @@ def _plain_update(svc, claim_id, text, reason, idempotency_key=None, anatomy=Non
     merged_anatomy = dict(old_item.get('anatomy') or {}, **(anatomy or {}))
     if new_raw == old_raw and merged_anatomy == (old_item.get('anatomy') or {}):
         raise Denied('NO_CHANGE', claim_id=claim_id)
+    if resolution is not None and resolution['last_claim_id'] != claim_id:
+        # F9: the id passed in auto mode was not the live version; the replacement
+        # still happens, but a blind overwrite must leave a warning in the run log.
+        _warn_stale_auto_update(svc, claim_id, resolution)
     old_text = old_raw.decode('utf-8')
     new_item = _rebuild_for_update(old_item, old_text, old_raw, text, new_raw, reason)
     if merged_anatomy:
@@ -1456,7 +1506,7 @@ TOOL_DOCS = {
             'reason': _arg('string', True, 'Why it changes; recorded in the event chain.'),
             'idempotency_key': _arg('string', False, 'Optional idempotency key (TD-DOM-22.5): replaying the same update returns the same new version instead of appending again.'),
             'anatomy': _arg('object', False, 'Optional new anatomy values {basis?, refines?, purpose?, usage?, keywords?}; merged over the old ones in the new version (plan_ref is fixed). Text may stay the same when anatomy changes.'),
-            'expected_current': _arg('string', False, 'Read-before-write: the claim_id of the version you read. If the claim moved on (another agent updated it), the answer is CONFLICT_READ_REQUIRED with the current version and nothing is written.'),
+            'expected_current': _arg('string', False, 'Recommended read-before-write: the claim_id of the version you read. If the claim moved on (another agent updated it), the answer is CONFLICT_READ_REQUIRED with the current version and nothing is written. Without it auto mode reads the current version anyway but still replaces the id it was given, logging a warning instead of refusing.'),
             'mode': _arg('string', False, 'auto (default) | update | fork. fork (needs expected_current): the current version is another agent\'s and does not fit -> your text becomes a parallel variant (both current, variant_of + an open conflict; dom_reconcile merges them when they converge). Not allowed over your own version (FORK_NOT_ALLOWED).'),
         },
         'returns': 'status CLAIM_UPDATED, new_claim_id, supersedes, record_id, logical_claim_id, version, revision, review_level, next_steps | CLAIM_FORKED {claim_id, forked_from, forked_from_author, branch, conflict_ref} | CONFLICT_READ_REQUIRED {current_claim_id, author, version, revision}.',

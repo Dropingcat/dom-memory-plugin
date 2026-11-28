@@ -39,7 +39,9 @@ SKILL_ROOTS = [
     Path.home() / '.claude' / 'skills',
 ]
 
-CACHE_SCHEMA = 1
+# P0/F10: bump when the cached payload shape changes; load_cache treats another
+# schema as a miss, so an old index-<fp>.json file is rebuilt, never misread.
+CACHE_SCHEMA = 2
 DEFAULT_CACHE_DIR = Path('.dom-memory') / 'skill-cache'
 
 # Closed vocabulary for ``mentions``. Character stems, not whole words: ``migrat`` matches

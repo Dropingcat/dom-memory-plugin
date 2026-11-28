@@ -1181,6 +1181,14 @@ Coverage/stale/conflict/pending; readiness, не закрывает задачу
 
 Важно: `help` обрезается до 500 символов (`HELP_LIMIT`). Обрыв текста на полуслове — это лимит, а не пустой `help`; полная версия всегда доступна через `dom_help`.
 
+### 4.1. Error help gate выключен по умолчанию
+
+Error help gate (`help_gate.js`) выключен по умолчанию. Причина: `execute.after` не срабатывает для MCP-инструментов на OpenCode V2. Включить после live-пробы. `HELP_GATE_ENABLED=false`.
+
+Покрытие самого gate — 12 инструментов из 35 (`dom_describe`, `dom_claim`, `dom_update`, `dom_annotate`, `dom_find`, `dom_context`, `dom_plan_status`, `dom_plan_ingest`, `dom_plan_tree`, `dom_task_claims`, `dom_skill_select`, `dom_help`); для остальных подсказку даёт только `dom_help`.
+
+Практическое следствие: автоматическая строка `⚠️ <tool> failed. <help>` в инструкции (`dom-help`) не появляется, и `help` из ответа инструмента остаётся единственным источником подсказки. Это не ошибка и не повод повторять вызов — действуйте по §1–§3 и, если нужно, по `dom_help`. Включать gate (`helpGate: true` в опциях плагина) стоит только после того, как live-проба подтвердит, что хост действительно вызывает `execute.after` для MCP-инструментов и передаёт server-prefixed имя (`dom-memory_dom_claim`).
+
 ## Приложение A. Коды в коде, но не в HELP_DATA
 
 Эти коды реально возвращаются сервером (`Denied(...)`, `_STATUS_HELP`, `_HELP`, транспорт), но не описаны ни в одном `common_errors` словаря `HELP_DATA.py`. Их стоит добавить в справку соответствующих инструментов.
