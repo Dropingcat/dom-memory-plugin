@@ -210,8 +210,10 @@ test("prompt hook emits once, then logs the idle count instead of re-emitting", 
   }
 
   const logged = []
-  const original = console.log
+  const originalLog = console.log
+  const originalWarn = console.warn
   console.log = (...args) => logged.push(args.join(" "))
+  console.warn = (...args) => logged.push(args.join(" "))
   try {
     await handlers.prompt({ sessionID, prompt: { text: "go" }, skillBlock: block })
     assert.equal(put.length, 1)
@@ -236,7 +238,8 @@ test("prompt hook emits once, then logs the idle count instead of re-emitting", 
     assert.equal(put.length, 2)
     assert.equal(put[1][1], "use: writing-plans@90ab12cd (planning)")
   } finally {
-    console.log = original
+    console.log = originalLog
+    console.warn = originalWarn
     cleanup()
     forgetSession(sessionID)
   }

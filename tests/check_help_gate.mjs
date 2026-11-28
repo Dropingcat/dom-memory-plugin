@@ -10,15 +10,18 @@ import { register } from "../opencode/index.js"
 const PY = process.env.DOM_PYTHON || process.env.PYTHON_BIN || "python"
 const DOM_TOOLS = Object.keys(HELP_DATA).filter((key) => key.startsWith("dom_"))
 
-/** Run `fn` with console.log captured (the gate logs its injection). */
+/** Run `fn` with console.warn captured (the gate warns its injection). */
 function captured(fn) {
   const lines = []
-  const original = console.log
+  const originalLog = console.log
+  const originalWarn = console.warn
   console.log = (...args) => lines.push(args.join(" "))
+  console.warn = (...args) => lines.push(args.join(" "))
   try {
     return { value: fn(), lines }
   } finally {
-    console.log = original
+    console.log = originalLog
+    console.warn = originalWarn
   }
 }
 

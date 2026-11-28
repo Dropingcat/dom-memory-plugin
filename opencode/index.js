@@ -387,7 +387,7 @@ export async function register(ctx) {
     const fingerprint = computeFingerprint(block.state)
     const { shouldReemit, idleCount } = checkReemit(sessionID || "", fingerprint)
     if (!shouldReemit) {
-      console.log(`[τ-gate] idle (${idleCount}), block not re-emitted`)
+      console.warn(`[τ-gate] idle (${idleCount}), block not re-emitted`)
       return
     }
     /* Entry transport first (the host announces it at the next step boundary), the
@@ -396,7 +396,7 @@ export async function register(ctx) {
     if (typeof entry?.put === "function") entry.put("dom.skill-queue", block.text)
     else if (typeof entry?.set === "function") entry.set("dom.skill-queue", block.text)
     else queue(sessionID, block.text)
-    console.log(`[τ-gate] emit fp=${fingerprint.slice(0, 12)}`)
+    console.warn(`[τ-gate] emit fp=${fingerprint.slice(0, 12)}`)
   }
 
   /* Skill queue producer: the context hook turns the active step of the plan brief
@@ -472,7 +472,7 @@ export async function register(ctx) {
         error: delivery.error,
       }
     }
-    console.log(
+    console.warn(
       `[dom-memory] skill-queue injected via ${delivery.via}: ${top} (${text.length} chars, idle ${idleCount}, ` +
         `fp ${fingerprint.slice(0, 12)})`,
     )

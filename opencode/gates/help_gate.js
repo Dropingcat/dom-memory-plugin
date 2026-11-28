@@ -112,7 +112,7 @@ export function applyHelpGate(event, output, options = {}) {
   if (!isErrorEvent(event, output)) return undefined
   const toolName = normalizeToolName(event?.tool ?? event?.toolID ?? event?.name)
   if (!toolName.startsWith("dom_")) return undefined
-  console.log(`[dom-memory hooks] error help: ${toolName} failed -> injected`)
+  console.warn(`[dom-memory hooks] error help: ${toolName} failed -> injected`)
   return { tool: toolName, help: helpFor(toolName) }
 }
 
