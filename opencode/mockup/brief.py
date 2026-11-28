@@ -215,6 +215,10 @@ def project_brief(svc, max_chars=MAX_CHARS):
         # machine-readable context for step lock
         if curr_context:
             lines.append('  CURRENT MEANING: ' + _short(curr_context, 240))
+        # instruction: after each step, write a claim (the loop closer)
+        step_instruction = ('  → После шага запиши dom_claim({plan_task: "%s", '
+                           'type: "text", text: "Сейчас: <итог шага>", keywords: ["now"]})') % curr_path
+        lines.append(step_instruction)
 
         # ── NEXT TASKS (siblings of current, up to 4) ──
         siblings = children.get(current.get('parent_id'), [])
