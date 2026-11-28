@@ -4,7 +4,10 @@
     "dom-router": {
       "permissions": [
         {"action": "skill", "resource": "*", "effect": "deny"},
-        {"action": "skill", "resource": "sqlite-migration|dom-memory|test-driven-development|pubchem-database", "effect": "allow"}
+        {"action": "skill", "resource": "sqlite-migration", "effect": "allow"},
+        {"action": "skill", "resource": "dom-memory", "effect": "allow"},
+        {"action": "skill", "resource": "test-driven-development", "effect": "allow"},
+        {"action": "skill", "resource": "pubchem-database", "effect": "allow"}
       ]
     }
   },

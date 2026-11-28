@@ -35,6 +35,8 @@
  *   autostart   start the project memory on the first task (default true); false = DOM_AUTOSTART=0
  *   timeoutMs   per hook-program timeout (default 60000)
  *   skillTimeoutMs  ceiling for the skill queue producer inside a model request (default 4000)
+ *   dynamicPermissions  "allow" (default) appends the queue to the session allow-list;
+ *                  "strict" also denies every other skill; false/"off" keeps the static profile
  *   enabled     false turns both hooks off
  */
 import { spawnSync } from "node:child_process"
@@ -399,6 +401,57 @@ export async function register(ctx) {
     console.warn(`[τ-gate] emit fp=${fingerprint.slice(0, 12)}`)
   }
 
+  /* Session-scoped skill permissions: the static agent profile names four ids,
+     while the router picks a queue per step.  The host has no
+     `ctx.session.permissions.set`; the documented lever is
+     `ctx.session.update({ sessionID, permissions })` (Build plugins -> Server ->
+     Permissions).  Session rules are evaluated after the agent's, the last match
+     wins, and child sessions inherit them, so they can replace the static
+     allow-list for this session only.
+       dynamicPermissions: "allow" (default) adds the queue to the agent's rules;
+                          "strict" also denies every other skill, making the queue
+                          the exact allow-list (for an agent that owns skills);
+                          false/"off" leaves the static profile untouched. */
+  const permissionSignatures = new Map() // sessionID -> JSON of the last ruleset applied
+
+  const permissionRulesFor = (queueList) => {
+    const mode = options.dynamicPermissions ?? "allow"
+    if (mode === false || mode === "off") return null
+    const ids = [...new Set(queueList.map((id) => String(id).trim()).filter(Boolean))]
+    if (!ids.length) return null
+    const allow = { action: "skill", resource: ids.join("|"), effect: "allow" }
+    return mode === "strict" ? [{ action: "skill", resource: "*", effect: "deny" }, allow] : [allow]
+  }
+
+  /* Advisory: a failed update is logged and retried on the next request; the
+     model request itself is never blocked by a permissions error. */
+  const applySkillPermissions = (sessionID, queueList) => {
+    const permissions = permissionRulesFor(queueList)
+    if (!permissions) return null
+    const update = ctx.session?.update
+    if (typeof update !== "function") {
+      console.warn("[dom-memory] permissions: ctx.session.update unavailable — static allow-list only")
+      return { status: "unavailable", resource: permissions[permissions.length - 1].resource }
+    }
+    const signature = JSON.stringify(permissions)
+    const resource = permissions[permissions.length - 1].resource
+    if (permissionSignatures.get(sessionID) === signature) return { status: "unchanged", resource }
+    const failed = (caught) => {
+      permissionSignatures.delete(sessionID)
+      console.warn(`[dom-memory] permissions: update failed: ${caught instanceof Error ? caught.message : caught}`)
+    }
+    try {
+      const pending = update.call(ctx.session, { sessionID, permissions })
+      permissionSignatures.set(sessionID, signature)
+      if (pending && typeof pending.catch === "function") pending.catch(failed)
+      console.warn(`[dom-memory] permissions: session allow-list = ${resource}`)
+      return { status: "updated", resource }
+    } catch (caught) {
+      failed(caught)
+      return { status: "error", resource }
+    }
+  }
+
   /* Skill queue producer: the context hook turns the active step of the plan brief
      into a queue block by running the Python pipeline.  This is the native producer
      the tau-gate above was built for: the producer returns the normalised sigma
@@ -442,10 +495,11 @@ export async function register(ctx) {
     }
     const queueList = Array.isArray(data.queue) ? data.queue.map((id) => String(id)) : []
     const top = queueList[0] || "skill_search"
+    const permissions = applySkillPermissions(sessionID, queueList)
     const { shouldReemit, idleCount } = checkReemit(sessionID, fingerprint)
     if (!shouldReemit) {
       console.log(`[τ-gate] skill-queue idle (${idleCount}), block not re-emitted`)
-      return { status: "idle", skill_id: top, idle: idleCount, fingerprint }
+      return { status: "idle", skill_id: top, idle: idleCount, fingerprint, permissions: permissions?.status ?? null }
     }
     const text = data.block_text.trim()
     /* F1: `entry.put` is not verifiable from inside the hook — in the live host it
@@ -470,6 +524,7 @@ export async function register(ctx) {
         fingerprint,
         via: delivery.via,
         error: delivery.error,
+        permissions: permissions?.status ?? null,
       }
     }
     console.warn(
@@ -484,6 +539,7 @@ export async function register(ctx) {
       confidence_bp: Number(data.confidence_bp) || 0,
       fingerprint,
       via: delivery.via,
+      permissions: permissions?.status ?? null,
     }
   }
 
@@ -685,6 +741,7 @@ export async function register(ctx) {
               idle: skillQueue.idle ?? 0,
               fingerprint: skillQueue.fingerprint ? skillQueue.fingerprint.slice(0, 16) : null,
               via: skillQueue.via ?? null,
+              permissions: skillQueue.permissions ?? null,
               error: skillQueue.error ?? null,
             }
           : null,

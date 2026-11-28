@@ -19,6 +19,7 @@
 4. [Что делать, если help пустой](#4-что-делать-если-help-пустой)
 A. [Приложение A. Коды в коде, но не в HELP_DATA](#приложение-a-коды-в-коде-но-не-в-help_data)
 B. [Приложение B. Статусы, которые не являются ошибками](#приложение-b-статусы-которые-не-являются-ошибками)
+C. [Приложение C. FAQ](#приложение-c-faq)
 
 ## 1. Общий алгоритм при ошибке
 
@@ -1240,3 +1241,33 @@ Error help gate (`help_gate.js`) выключен по умолчанию. Пр�
 | Прочее | `ANNOTATED`, `RECONCILED`, `SKILLS_SELECTED`, `OK`, `SUPERSEDED`, `AWAITING_REVIEW`, `REVIEWED`, `ADMITTED` |
 
 `REVIEW_FAILED` и `REVIEW_REJECTED` — **не успех**: первый означает провал validate дистиллята, второй — отклонение кандидата review; оба описаны в §2.
+
+## Приложение C. FAQ
+
+### «Почему я вижу 169 скилов в промпте?»
+
+**Короткий ответ:** OpenCode загружает весь каталог skills в каждый промпт автоматически. Для фильтрации используй `--agent dom-router` с permissions.
+
+**Подробно.** `core/skill-guidance` — core-блок хоста, а не ответ DOM-инструмента; поэтому в ответах нет ни `status`, ни `hint`, и это не ошибка. Плагин не может ни переписать, ни удалить этот блок: `ctx.skill.transform` видит только 17 plugin-visible skills (E4), а `dom.skill-queue` лишь добавляет строку с выбранными skills, не убирая каталог. В текущей сборке каталог занимает ~70 882 chars на 169 skills.
+
+Единственный поддерживаемый способ убрать каталог — permissions-профиль агента. В `opencode/opencode.dev.json` объявлен `agents.dom-router`:
+
+```json
+"permissions": [
+  {"action": "skill", "resource": "*", "effect": "deny"},
+  {"action": "skill", "resource": "sqlite-migration", "effect": "allow"},
+  {"action": "skill", "resource": "dom-memory", "effect": "allow"}
+]
+```
+
+Обратите внимание: `resource` — это whole-value wildcard (`*`, `?`), а не regex. Альтернация `a|b` не работает и не разрешает ни один skill, поэтому allow-list — отдельное правило на каждый id. В репозитории allow-правило сейчас записано одной строкой через `|`; фактически это «deny all» (каталог скрыт полностью, 0 skills), и до исправления конфига профиль работает именно так.
+
+Запуск:
+
+```powershell
+powershell -File tools/run_dev_session.ps1 -Prompt "Reply with exactly: ok" --agent dom-router
+```
+
+E6 (fresh session, 2026-11-24): `deny *` + одна разрешённая запись даёт 69 276 → 575 chars (−99,2%). Live-замер `dom-router` 2026-11-28: блок `core/skill-guidance` отсутствует целиком, system 86 644 → 13 854 chars. Проверка — по свежему снапшоту `.dom-memory/observability/prompts/<session_id>/<ts>.json`: поле `agent` = `"dom-router"`, запрещённых skills в тексте нет. Если allow-правила записаны по одному id, в каталоге остаются только они и его размер — сотни символов.
+
+Важно: `deny` запрещает и загрузку skill по id, поэтому `allow` должен покрывать skills, нужные шагам плана. Сейчас allow-list статический (правила в конфиге) и не связан с `dom.skill-queue`; динамический режим включается опцией `options.dynamicPermissions` и ещё не подтверждён E2E-замером каталога. Порядок запуска и проверки — `docs/development.md` §7, полный разбор — `docs/audit/root-cause-analysis.md`.
