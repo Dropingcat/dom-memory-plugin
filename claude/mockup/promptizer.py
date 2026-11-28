@@ -17,25 +17,25 @@ SPECS = {
     'current_meaning': {
         'prompt': 'One sentence: what this block covers, named by its own title and blocks.',
         'limit': 240,
-        'markers': ('задач', 'task', 'блок', 'notes', 'schema'),
+        'markers': ('задач', 'task', 'блок', 'notes', 'schema', 'проблем', 'аудит', 'срез', 'есть', 'инвентариза'),
         'roles': ('implements', 'documents', 'validates'),
     },
     'why': {
         'prompt': 'One sentence: why this block matters for the project goal.',
         'limit': 240,
-        'markers': ('помога', 'why', 'нужн', 'цель', 'чтобы'),
+        'markers': ('помога', 'why', 'нужн', 'цель', 'чтобы', 'для чего', 'зачем', 'purpose'),
         'roles': ('documents', 'implements', 'justifies'),
     },
     'now': {
         'prompt': 'One sentence: what is being done right now, in the current step.',
         'limit': 240,
-        'markers': ('сейчас', 'сейчас ', 'now', 'идёт', 'идет', 'делаю', 'планиру'),
+        'markers': ('сейчас', 'сейчас ', 'now', 'идёт', 'идет', 'делаю', 'планиру', 'текущ', 'шаг', 'этап', 'стадия'),
         'roles': ('implements', 'validates', 'documents'),
     },
     'vector': {
         'prompt': 'One sentence: the path from the current anchor to the finished block.',
         'limit': 260,
-        'markers': ('собрать', 'vector', 'порядок', 'затем', 'далее'),
+        'markers': ('собрать', 'vector', 'порядок', 'затем', 'далее', 'после'),
         'roles': ('implements', 'documents'),
     },
     'boundaries': {
@@ -59,11 +59,11 @@ SPECS = {
 }
 
 CLAUSE_MARKERS = {
-    'current_meaning': ('Текущая задача:', 'Task:'),
-    'why': ('Зачем:', 'Why:'),
-    'now': ('Сейчас:', 'Now:'),
-    'vector': ('Вектор:', 'Vector:'),
-    'boundaries': ('Границы:', 'Boundaries:'),
+    'current_meaning': ('Текущая задача:', 'Task:', 'Базовый срез:', 'Анализ:', 'Сбор:'),
+    'why': ('Зачем:', 'Why:', 'Цель:', 'Необходимо для:', 'Для чего:'),
+    'now': ('Сейчас:', 'Now:', 'Текущий шаг:', 'Этап:', 'Шаг:'),
+    'vector': ('Вектор:', 'Vector:', 'Далее:', 'После:', 'Порядок:'),
+    'boundaries': ('Границы:', 'Boundaries:', 'Не:', 'Только:'),
     'tools': ('Инструменты:', 'Tools:'),
     'gits': ('Гиты:', 'Gits:'),
 }
@@ -175,6 +175,18 @@ def resolve(c, name, props, task_id, context='', anchor=''):
     text, claim_id = linked_claim(c, task_id, spec.get('roles') or (), limit)
     if text:
         return {'text': text, 'source': 'claim', 'anchor': claim_id}
+    # Fallback (2026-11-28): any linked claim regardless of role or marker.
+    # Without this the chain breaks: model writes claims but promptizer never
+    # finds them because markers don't match, so step context stays "not recorded".
+    fallback = c.execute(
+        'SELECT tc.role, cl.id FROM task_claims tc JOIN claims cl ON cl.id=tc.claim_id '
+        'WHERE tc.plan_task_id=? AND tc.role!=\'defines\' ORDER BY cl.rowid DESC LIMIT 1',
+        (task_id,),
+    ).fetchone()
+    if fallback:
+        text = distill(planning._claim_text(c, fallback['id']) or '', limit, spec['markers'])
+        if text:
+            return {'text': text, 'source': 'claim_fallback', 'anchor': fallback['id']}
     return {'text': '', 'source': 'none', 'anchor': ''}
 
 
