@@ -134,7 +134,9 @@ def check_registration() -> None:
         assert TOOL in tools, (profile, sorted(tools))
         schema = tools[TOOL].inputSchema
         assert schema['type'] == 'object' and schema['additionalProperties'] is False, schema
-        assert schema['required'] == ['tool'], schema
+        # BUG-1: tool is optional in the schema; otherwise OpenCode rejects the
+        # call before the handler can answer with Russian help.
+        assert schema['required'] == [], schema
         assert schema['properties']['tool']['type'] == 'string', schema
         assert 'help' in tools[TOOL].description.lower(), tools[TOOL].description
 

@@ -144,14 +144,14 @@ def main() -> int:
     tool = next(item for item in server_mod.tools_for("lite") if item.name == TOOL)
     assert tool.inputSchema["type"] == "object", tool.inputSchema
     assert tool.inputSchema["additionalProperties"] is False, tool.inputSchema
-    assert tool.inputSchema["required"] == ["step"], tool.inputSchema
+    assert tool.inputSchema["required"] == [], tool.inputSchema
     assert tool.inputSchema["properties"]["step"]["type"] == "object", tool.inputSchema
     assert tool.inputSchema["properties"]["queue"]["type"] == "array", tool.inputSchema
     assert tool.description and "skill" in tool.description.lower(), tool.description
 
     required, optional = server_mod.SIGNATURE[TOOL]
-    assert required == {"step": dict}, required
-    assert optional == {"queue": list, "plan_version": int, "index_digest": str}, optional
+    assert required == {}, required
+    assert optional == {"step": dict, "queue": list, "plan_version": int, "index_digest": str}, optional
 
     # 3. Lite-only: the strict tool table is untouched.
     assert TOOL not in server_mod.STRICT_TOOL_NAMES, "dom_skill_select is a lite tool"
@@ -175,6 +175,16 @@ def main() -> int:
     else:
         raise AssertionError("an unknown argument must be refused")
 
+    # 5b. BUG-1: step is optional at the transport, so a missing step reaches the
+    #     handler, which refuses with a typed status and Russian help instead of
+    #     rejecting the call in the schema.
+    refusal = server_mod.dispatch(ReadOnlyService(), TOOL, {})
+    assert refusal["status"] == "INVALID_ARGUMENTS", refusal
+    assert refusal["field"] == "step", refusal
+    assert "Тебе НУЖНО" in refusal["help"], refusal
+    assert server_mod.handle_dom_skill_select(None)["status"] == "INVALID_ARGUMENTS"
+    assert server_mod.handle_dom_skill_select("step")["status"] == "INVALID_ARGUMENTS"
+
     # 6. Hermetic dispatch: inject the fixture index instead of walking the user's home.
     skills, cards = fixtures()
     original_skills, original_cards = skill_select.collect_skills, skill_select.load_cards
@@ -197,9 +207,42 @@ def main() -> int:
     encoded = json.dumps(public, ensure_ascii=True, sort_keys=True)
     assert "SKILLS_SELECTED" in encoded and "sqlite-migration" in encoded, encoded
 
+    # 6b. BUG-4 STEP-BOUNDS: an over-long step is refused by the handler before the
+    #     pipeline runs, with Russian help; the refusal projects to the DomainError shape.
+    original_collect = skill_select.collect_skills
+
+    def pipeline_must_not_run(roots=None):
+        raise AssertionError("the pipeline must not run for a refused step")
+
+    for field, payload in (("step.title", {"title": "x" * 501}),
+                           ("step.context", {"title": "ok", "context": "x" * 2001})):
+        skill_select.collect_skills = pipeline_must_not_run
+        try:
+            refusal = server_mod.dispatch(ReadOnlyService(), TOOL, {"step": payload})
+        finally:
+            skill_select.collect_skills = original_collect
+        assert refusal["status"] == "INVALID_FIELD", refusal
+        assert refusal["field"] == field, refusal
+        assert "Тебе НУЖНО" in refusal["help"], refusal
+        projected = public_dto.project_tool(TOOL, refusal, scope={"main"}, profile="lite")
+        assert projected["status"] == "INVALID_FIELD", projected
+        assert projected["field"] == field, projected
+        assert projected["help"] == refusal["help"], projected
+
+    # The exact boundary is allowed: 500 title / 2000 context chars reach the pipeline.
+    skill_select.collect_skills = lambda roots=None: list(skills)
+    skill_select.load_cards = lambda path=None: list(cards)
+    try:
+        boundary = server_mod.dispatch(ReadOnlyService(), TOOL,
+                                       {"step": {"title": "x" * 500, "context": "y" * 2000}})
+    finally:
+        skill_select.collect_skills, skill_select.load_cards = original_skills, original_cards
+    assert boundary["status"] == "SKILLS_SELECTED", boundary.get("status")
+
     print("PASS skill_mcp_registration: dom_skill_select in TOOL_DOCS/LITE_TOOL_NAMES/"
           "SIGNATURE/HANDLERS/LITE_RESPONSES/RECORDS; lite-only, read-only dispatch, "
-          "queue=%s, block=%d chars" % (public["queue"], len(public["block"])))
+          "queue=%s, block=%d chars, step bounds=INVALID_FIELD at 501/2001"
+          % (public["queue"], len(public["block"])))
     return 0
 
 
