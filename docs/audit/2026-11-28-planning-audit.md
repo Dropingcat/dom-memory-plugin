@@ -217,7 +217,7 @@ WHERE v.path='П15' ORDER BY v.source_revision;
 | **P0** | `current_task=П15` | ✅ **done** | `dom_annotate` → `current_task="П1"` |
 | **P1** | `plan_ingest` плодит `plan_task_id` | ✅ **done** | В `ingest()`: при наличии `base_revision` инжектится старый root id в `roots[0]['id']`, что заставляет `flatten()` считать это revision |
 | **P2** | Двойной путь на одной ревизии | ✅ **done** | В `flatten().walk()`: `seen_paths` — проверка уникальности `path` перед добавлением |
-| **P3** | Плоская иерархия | ⏳ **plan** | При перепланировании: создать П0 "Разработка плагина DOM" как корень |
+| **P3** | Плоская иерархия | ✅ **done** | `brief.py`: синтетический root в LINE (`main_task` из root claim) — работает для любого DOM-проекта |
 
 ### Изменённые файлы
 
@@ -225,6 +225,8 @@ WHERE v.path='П15' ORDER BY v.source_revision;
 |------|-------------|
 | `opencode/mockup/planning.py` | P1: inject root id в ingest() перед flatten(); P2: dedup guard по path в walk() |
 | `claude/mockup/planning.py` | Те же изменения (mirror) |
+| `opencode/mockup/brief.py` | P3: synthetic root `main_task` в LINE с индентацией lineage под ним |
+| `claude/mockup/brief.py` | Те же изменения (mirror) |
 | `docs/plan-identity.md` | Добавлен §12 с описанием P1 fix |
 | Root claim `149d33e5` | `current_task` обновлён с П15 на П1 |
 
