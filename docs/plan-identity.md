@@ -104,6 +104,16 @@ Consequences:
 * **New plan** (root title changed): every auto-derived item gets a fresh
   `plan_task_id` → new branches → new header claims. The previous plan is
   archived as a unit by `mode='full'`; its claims and versions stay in history.
+
+  **Exception (P1 fix, 2026-11-28):** When the caller sets `base_revision` (i.e.
+  knows the current projection and is continuing it), `ingest()` injects the old
+  root's `plan_task_id` as an explicit `id` on the new root *before* `flatten()`
+  runs. This makes the guard see a matching `root_id`, so the heuristic runs and
+  keeps old ids for all children at the same path. The root itself gets a new
+  version of its header claim (because its title changed), but the branch code
+  and plan_task_id stay the same. Without `base_revision` the old behavior is
+  preserved: a different root title starts a new plan. See also §10 "P1 fix:
+  continuity through base_revision".
 * **Same plan** (root unchanged): the rename heuristic stays as it is today; a
   renamed item keeps its id and becomes a new version of its header claim.
 
@@ -239,3 +249,44 @@ guard's decision depends on the root title, not on the provenance of the ids.
   TD-DOM-60 (fork / read-before-write).
 * Live evidence: r11 backup at
   `omh-baseline-dom-mcp/.dom-memory/backups/2026-11-14-r11-before-restore/dom.sqlite3`.
+
+## 12. P1 fix (2026-11-28): continuity through base_revision
+
+### Problem
+Iterative `dom_plan_ingest` calls that update П1's title (r23→r33) treated each
+call as a **new plan**, creating 12+ stale `plan_task_id` entries per path (375
+plan_tasks, 811 plan_task_versions, 440 active records for 29 real tasks).
+
+Every re-ingest where П1's title changed caused `flatten()` to clear `previous`
+and regenerate all IDs, even when П2–П7 were unchanged.
+
+### Solution
+In `ingest()`, when `base_revision` is set (the caller has read the current
+projection and is continuing it), inject the old root's `plan_task_id` as an
+explicit `id` on the new root node before `flatten()` runs. This hits rule #3
+of the identity guard ("explicit ids win"), so `previous` is preserved and all
+items at the same path keep their IDs.
+
+Without `base_revision` the old behavior is unchanged: a different root title
+starts a new plan with fresh IDs.
+
+### Changed files
+- `opencode/mockup/planning.py` — `ingest()`: root id injection before `flatten`
+- `claude/mockup/planning.py` — same change (mirror)
+- `docs/plan-identity.md` — this section
+
+### Tests
+- Existing `tests/check_plan_identity.py` scenario A (new plan) — unchanged when
+  `base_revision` is not set.
+- Scenario B (revision) — unchanged because root title is identical.
+- New behavior: call with `base_revision="r33"` and a changed root title → root
+  keeps its `plan_task_id`; children keep theirs.
+
+### Edge cases
+- **`base_revision` not set + new root title** → old behavior: new plan (fresh IDs).
+- **`base_revision` set + unchanged plan** → early return PLAN_UNCHANGED (the
+  snapshot_digest check fires before the projection write).
+- **`base_revision` set + wrong revision** → existing PLAN_CONFLICT check at
+  line 576 rejects the call (unless `force`).
+- **Explicit root `id` already on the new root** → the inject guard checks
+  `not roots[0].get('id')` and does nothing; explicit ids always win.

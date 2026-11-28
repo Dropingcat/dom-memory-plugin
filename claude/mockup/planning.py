@@ -59,9 +59,9 @@ def _clean_title(title):
     return _EMPHASIS.sub(lambda m: m.group('inner'), title).strip()
 
 
-def _node(title, status='pending', ident=None, body=None, purpose=None):
+def _node(title, status='pending', ident=None, body=None, purpose=None, accept=None):
     return {'title': _clean_title(title), 'status': status, 'id': ident, 'body': list(body or []),
-            'purpose': purpose, 'children': []}
+            'purpose': purpose, 'accept': accept, 'children': []}
 
 
 _CHECKBOX = re.compile(r'^\s*[-*+]\s+\[[ xX]\]\s+\S')
@@ -185,7 +185,7 @@ def _parse_outline(text):
 def parse_json(data):
     """JSON plan: a list, or {items|tasks|todos|plan: [...]}; item keys
     title|content|name|text, id, status, context|description|body|activeForm,
-    purpose, children|subtasks|items|steps."""
+    purpose, accept|acceptance, children|subtasks|items|steps."""
     if isinstance(data, dict):
         for key in ('items', 'tasks', 'todos', 'plan', 'steps'):
             if isinstance(data.get(key), list):
@@ -193,6 +193,21 @@ def parse_json(data):
                 break
     if not isinstance(data, list):
         raise ValueError('PLAN_FORMAT')
+
+    def accepts(entry):
+        """The item's acceptance criteria as a list of dicts, or None.
+
+        ``accept`` (the skill router's name) and ``acceptance`` are the same
+        declaration; anything that is not a dict / list of dicts is dropped, so
+        the brief never renders a CAP envelope the plan did not declare."""
+        value = entry.get('accept')
+        if value is None:
+            value = entry.get('acceptance')
+        if isinstance(value, dict):
+            value = [value]
+        if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+            return [dict(item) for item in value]
+        return None
 
     def one(entry):
         if isinstance(entry, str):
@@ -206,7 +221,7 @@ def parse_json(data):
         ident = entry.get('id') if isinstance(entry.get('id'), str) and entry['id'].strip() else None
         status = STATUS_MAP.get(str(entry.get('status', 'pending')), 'pending')
         purpose = entry.get('purpose') if isinstance(entry.get('purpose'), str) and entry['purpose'].strip() else None
-        node = _node(title, status, ident, body.splitlines() if body else [], purpose)
+        node = _node(title, status, ident, body.splitlines() if body else [], purpose, accepts(entry))
         kids = next((entry[k] for k in ('children', 'subtasks', 'items', 'steps') if isinstance(entry.get(k), list)), [])
         node['children'] = [one(k) for k in kids]
         return node
@@ -287,8 +302,16 @@ def flatten(roots, previous=None):
 
     def walk(nodes, parent, prefix, level):
         seen = {}
+        seen_paths = set()
         for index, node in zip(numbers(nodes), nodes):
             path = '%s%d' % (prefix, index) if prefix else '%s%d' % (PLAN_PREFIX, index)
+            # P2 fix (2026-11-28): guard against duplicate path within one ingest.
+            # flatten() should never emit two items with the same path; a second
+            # item at the same position is a plan input error.
+            if path in seen_paths:
+                raise _denied()('INVALID_FIELD', field='plan',
+                                hint='Duplicate plan item path %r; two items at the same position.' % path)
+            seen_paths.add(path)
             if node['id']:
                 tid = node['id']
             else:
@@ -308,7 +331,7 @@ def flatten(roots, previous=None):
             body = '\n'.join(node['body']).strip()
             out.append({'plan_task_id': tid, 'parent_id': parent, 'path': path, 'level': level,
                         'title': node['title'], 'body': body, 'status': node['status'],
-                        'purpose': node.get('purpose')})
+                        'purpose': node.get('purpose'), 'accept': node.get('accept')})
             if len(out) > MAX_ITEMS:
                 raise _denied()('INVALID_FIELD', field='plan', hint='At most %d plan items.' % MAX_ITEMS)
             walk(node['children'], tid, path + '.', level + 1)
@@ -529,6 +552,15 @@ def ingest(svc, plan, source='agent', fmt='auto', contexts=None, source_revision
         previous = {(r['parent_id'], r['path']): r['plan_task_id'] for r in c.execute(
             'SELECT v.plan_task_id,v.parent_id,v.path FROM current_plan_tasks v JOIN plan_tasks t ON t.plan_task_id=v.plan_task_id '
             'WHERE t.source=? AND v.archived=0', (source,))}
+    # P1 fix (2026-11-28): when base_revision is set (the caller is continuing
+    # an existing plan), inject the old root's plan_task_id as an explicit id
+    # on the new root so flatten() treats this as a revision even when the
+    # root title changed.  Without base_revision the old behavior is preserved:
+    # a different root title starts a new plan (plan-identity.md).
+    if previous and mode == 'full' and roots and not roots[0].get('id') and base_revision is not None:
+        old_root = _first_top(previous)
+        if old_root is not None:
+            roots[0]['id'] = old_root
     # partial: an item left out is not removed, so no rename heuristic (F-40)
     tasks = flatten(roots, previous if mode == 'full' else None)
     # QA004 F-15: a context key that names no item of this plan is reported, not dropped silently
@@ -641,6 +673,12 @@ def _sync_header(svc, t, source, revision, root_claim, context, tasks):
     wanted = {'plan_path': t['path'], 'branch_code': t['branch'], 'plan_status': t['status']}
     if context:
         wanted['context'] = context
+    if t.get('accept'):
+        # A property value must be a string (admission EVENT_FIELDS); the brief
+        # decodes this JSON list back into the CAP envelope.
+        wanted['accept'] = json.dumps(t['accept'], ensure_ascii=False, sort_keys=True)
+    elif props.get('accept'):
+        wanted['accept'] = '[]'  # the plan no longer declares acceptance criteria
     events = [_prop('p%d' % n, current, k, v, reason) for n, (k, v) in enumerate(sorted(wanted.items())) if props.get(k) != v]
     if events:
         receipt = _append(svc, t['branch'], events, reason, 'props')
