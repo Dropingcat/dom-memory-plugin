@@ -8,6 +8,7 @@ vector and a short checklist.  It never invents a relationship.
 from __future__ import annotations
 
 import json
+import sys
 
 from . import planning, promptizer
 from .admission import verify_chain
@@ -44,21 +45,32 @@ def _capabilities(props):
     line, so the producer receives ``cap: []`` instead of an invented envelope.
     """
     accept = props.get('accept')
+    if accept is None:
+        return []  # no declaration: `gaps: not-declared` is the honest answer
+    if isinstance(accept, str) and not accept.strip():
+        return []  # cleared by a newer plan revision that declares nothing
     if isinstance(accept, str):
         try:
             accept = json.loads(accept)
         except ValueError:
+            print('[dom-memory] brief CAP empty: accept property is not valid JSON', file=sys.stderr)
             return []
     if isinstance(accept, dict):
         accept = [accept]
-    if not isinstance(accept, list) or not accept:
+    if not isinstance(accept, list):
+        print('[dom-memory] brief CAP empty: accept property is not a list', file=sys.stderr)
         return []
+    if not accept:
+        return []  # explicitly empty: a newer plan withdrew the acceptance criteria
     try:
         from .skill_router import capabilities_from_accept
         caps, _unmapped = capabilities_from_accept(accept)
-        return list(caps)
-    except (ImportError, TypeError, ValueError):
+    except (ImportError, TypeError, ValueError) as e:
+        print('[dom-memory] brief CAP empty: %s' % type(e).__name__, file=sys.stderr)
         return []
+    if not caps:
+        print('[dom-memory] brief CAP empty: accept declared but no capability mapping', file=sys.stderr)
+    return list(caps)
 
 
 def _source(resolved, default='not recorded'):
@@ -150,11 +162,19 @@ def project_brief(svc, max_chars=MAX_CHARS):
             'LINE:',
         ]
         anchors = []
+        # P3 fix (2026-11-28): inject main_task as a synthetic root in LINE
+        # so the hierarchy reads GRANDLINE -> current lineage, even though
+        # plan_tasks may be flat.  Works for any project that has a root
+        # claim with a main_task property; falls back to root_text.
+        line_indent = '  '
+        if main_task and main_task != 'not recorded':
+            lines.append('  %s (plan %s)' % (_short(main_task, 100), revision or '?'))
+            line_indent = '    '
         for task in lineage:
             header, props = _header(c, task)
             if header:
                 anchors.append(header)
-            lines.append('  ' + _line(task, header, props))
+            lines.append(line_indent + _line(task, header, props))
         header, props = _header(c, current)
         caps = _capabilities(props)
         cap_line = ' CAP: %s' % ','.join(caps) if caps else ''
