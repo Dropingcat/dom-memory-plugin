@@ -164,6 +164,9 @@ def project_brief(svc, max_chars=MAX_CHARS):
             lines.append('  ЦЕЛЬ: ' + goal)
         else:
             lines.append('[DOM MEMORY INDEX] ' + summary_compact)
+        # machine-readable plan revision marker for step lock (stepFromBrief reads plan rN)
+        if main_task and main_task != 'not recorded' and revision:
+            lines.append('  [DOM MEMORY INDEX] plan %s' % revision)
 
         # ── CURRENT TASK ──
         lines.append('')
@@ -184,6 +187,28 @@ def project_brief(svc, max_chars=MAX_CHARS):
             lines.append(indent_curr + ' '.join(base_parts))
             if baseline:
                 lines.append(indent_curr + '  → ' + _short(baseline, 200))
+
+        # machine-readable CURRENT line for step lock (stepFromBrief)
+        curr_path = current.get('path', '?')
+        curr_title = _short(current.get('title', ''), 90)
+        curr_branch = current.get('branch') or ''
+        curr_status = current.get('status') or ''
+        curr_header, curr_props = _header(c, current)
+        curr_context = curr_props.get('context') or ''
+        curr_parts = [curr_path]
+        if curr_title:
+            curr_parts.append('"%s"' % curr_title)
+        if curr_branch:
+            curr_parts.append('[%s]' % curr_branch)
+        if curr_status:
+            curr_parts.append('[%s]' % curr_status)
+        curr_line = 'CURRENT: ' + ' '.join(curr_parts)
+        if curr_context:
+            curr_line += '  → ' + _short(curr_context, 120)
+        lines.append('  ' + curr_line)
+        # machine-readable context for step lock (stepFromBrief reads CURRENT MEANING/WHY/NOW)
+        if curr_context:
+            lines.append('  CURRENT MEANING: ' + _short(curr_context, 240))
 
         # ── NEXT TASKS ──
         siblings = children.get(current.get('parent_id'), [])
